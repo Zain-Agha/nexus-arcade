@@ -118,9 +118,7 @@ export default function MarioRunner({
   const audioContextRef = useRef<AudioContext | null>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const animationFrameRef = useRef<number>(0);
-  const broadcastIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
-    null
-  );
+  const broadcastIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const announceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const localBoardRef = useRef<(string | null)[][]>(createBoard());
@@ -144,12 +142,8 @@ export default function MarioRunner({
   const comboRef = useRef(0);
   const tickRef = useRef<() => void>(() => {});
 
-  const mobileDasTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
-  );
-  const mobileDasIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
-    null
-  );
+  const mobileDasTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mobileDasIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     gameStateRef.current = gameState;
@@ -166,18 +160,11 @@ export default function MarioRunner({
     if (typeof window === 'undefined') return;
     if (!audioContextRef.current) {
       try {
-        const Ctx =
-          window.AudioContext ||
-          (window as any).webkitAudioContext;
+        const Ctx = window.AudioContext || (window as any).webkitAudioContext;
         audioContextRef.current = new Ctx();
-      } catch {
-        /* noop */
-      }
+      } catch {}
     }
-    if (
-      audioContextRef.current &&
-      audioContextRef.current.state === 'suspended'
-    ) {
+    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
       audioContextRef.current.resume().catch(() => {});
     }
   };
@@ -249,10 +236,7 @@ export default function MarioRunner({
           osc.type = 'sine';
           osc.frequency.setValueAtTime(freq, now + i * 0.05);
           gain.gain.setValueAtTime(0.1, now + i * 0.05);
-          gain.gain.exponentialRampToValueAtTime(
-            0.001,
-            now + i * 0.05 + 0.25
-          );
+          gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.05 + 0.25);
           osc.connect(gain).connect(ctx.destination);
           osc.start(now + i * 0.05);
           osc.stop(now + i * 0.05 + 0.25);
@@ -297,10 +281,7 @@ export default function MarioRunner({
           osc.type = 'sawtooth';
           osc.frequency.setValueAtTime(freq, now + i * 0.15);
           gain.gain.setValueAtTime(0.12, now + i * 0.15);
-          gain.gain.exponentialRampToValueAtTime(
-            0.001,
-            now + i * 0.15 + 0.3
-          );
+          gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.15 + 0.3);
           osc.connect(gain).connect(ctx.destination);
           osc.start(now + i * 0.15);
           osc.stop(now + i * 0.15 + 0.3);
@@ -315,10 +296,7 @@ export default function MarioRunner({
           osc.type = 'triangle';
           osc.frequency.setValueAtTime(freq, now + i * 0.1);
           gain.gain.setValueAtTime(0.15, now + i * 0.1);
-          gain.gain.exponentialRampToValueAtTime(
-            0.001,
-            now + i * 0.1 + 0.4
-          );
+          gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.1 + 0.4);
           osc.connect(gain).connect(ctx.destination);
           osc.start(now + i * 0.1);
           osc.stop(now + i * 0.1 + 0.4);
@@ -333,12 +311,8 @@ export default function MarioRunner({
       .then((msg) => {
         if (msg) {
           setAnnouncement(msg);
-          if (announceTimerRef.current)
-            clearTimeout(announceTimerRef.current);
-          announceTimerRef.current = setTimeout(
-            () => setAnnouncement(''),
-            5000
-          );
+          if (announceTimerRef.current) clearTimeout(announceTimerRef.current);
+          announceTimerRef.current = setTimeout(() => setAnnouncement(''), 5000);
         }
       })
       .catch(() => {});
@@ -365,10 +339,7 @@ export default function MarioRunner({
     return false;
   };
 
-  const mergePiece = (
-    board: (string | null)[][],
-    piece: Piece
-  ): (string | null)[][] => {
+  const mergePiece = (board: (string | null)[][], piece: Piece): (string | null)[][] => {
     const newBoard = board.map((row) => [...row]);
     for (let r = 0; r < piece.shape.length; r++) {
       for (let c = 0; c < piece.shape[r].length; c++) {
@@ -384,9 +355,7 @@ export default function MarioRunner({
     return newBoard;
   };
 
-  const clearLines = (
-    board: (string | null)[][]
-  ): { board: (string | null)[][]; cleared: number[] } => {
+  const clearLines = (board: (string | null)[][]): { board: (string | null)[][]; cleared: number[] } => {
     const cleared: number[] = [];
     const newBoard: (string | null)[][] = [];
     for (let r = 0; r < board.length; r++) {
@@ -409,9 +378,7 @@ export default function MarioRunner({
       const count = Math.min(pendingGarbageRef.current, BOARD_HEIGHT - 2);
       pendingGarbageRef.current = 0;
       setPendingGarbageDisplay(0);
-      const gap = Math.floor(
-        (rngRef.current ? rngRef.current() : Math.random()) * BOARD_WIDTH
-      );
+      const gap = Math.floor((rngRef.current ? rngRef.current() : Math.random()) * BOARD_WIDTH);
       let overflow = false;
       for (let i = 0; i < count; i++) {
         if (board[i] && board[i].some((cell) => cell !== null)) {
@@ -425,9 +392,7 @@ export default function MarioRunner({
       }
       const newBoard = board.slice(count);
       for (let i = 0; i < count; i++) {
-        const row: (string | null)[] = Array(BOARD_WIDTH).fill(
-          GARBAGE_COLOR
-        );
+        const row: (string | null)[] = Array(BOARD_WIDTH).fill(GARBAGE_COLOR);
         row[gap] = null;
         newBoard.push(row);
       }
@@ -507,12 +472,7 @@ export default function MarioRunner({
     const piece = currentPieceRef.current;
     if (!piece || gameOverRef.current) return;
     let dropDistance = 0;
-    while (
-      !collides(localBoardRef.current, {
-        ...piece,
-        y: piece.y + 1,
-      })
-    ) {
+    while (!collides(localBoardRef.current, { ...piece, y: piece.y + 1 })) {
       piece.y++;
       dropDistance++;
     }
@@ -622,13 +582,7 @@ export default function MarioRunner({
     announceEvent('victory');
   };
 
-  const drawBlock = (
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    size: number,
-    color: string
-  ) => {
+  const drawBlock = (ctx: CanvasRenderingContext2D, x: number, y: number, size: number, color: string) => {
     ctx.fillStyle = color;
     ctx.shadowBlur = size > 20 ? 10 : 4;
     ctx.shadowColor = color;
@@ -638,26 +592,11 @@ export default function MarioRunner({
     ctx.fillRect(x + 2, y + 2, size - 4, Math.max(2, size * 0.12));
     ctx.fillRect(x + 2, y + 2, Math.max(2, size * 0.12), size - 4);
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fillRect(
-      x + 2,
-      y + size - 2 - Math.max(2, size * 0.12),
-      size - 4,
-      Math.max(2, size * 0.12)
-    );
-    ctx.fillRect(
-      x + size - 2 - Math.max(2, size * 0.12),
-      y + 2,
-      Math.max(2, size * 0.12),
-      size - 4
-    );
+    ctx.fillRect(x + 2, y + size - 2 - Math.max(2, size * 0.12), size - 4, Math.max(2, size * 0.12));
+    ctx.fillRect(x + size - 2 - Math.max(2, size * 0.12), y + 2, Math.max(2, size * 0.12), size - 4);
   };
 
-  const drawPiece = (
-    ctx: CanvasRenderingContext2D,
-    piece: Piece,
-    cellSize: number,
-    isGhost: boolean
-  ) => {
+  const drawPiece = (ctx: CanvasRenderingContext2D, piece: Piece, cellSize: number, isGhost: boolean) => {
     for (let r = 0; r < piece.shape.length; r++) {
       for (let c = 0; c < piece.shape[r].length; c++) {
         if (piece.shape[r][c]) {
@@ -677,11 +616,7 @@ export default function MarioRunner({
     }
   };
 
-  const drawBlocks = (
-    ctx: CanvasRenderingContext2D,
-    board: (string | null)[][],
-    cellSize: number
-  ) => {
+  const drawBlocks = (ctx: CanvasRenderingContext2D, board: (string | null)[][], cellSize: number) => {
     for (let r = 0; r < BOARD_HEIGHT; r++) {
       for (let c = 0; c < BOARD_WIDTH; c++) {
         const cell = board[r] ? board[r][c] : null;
@@ -727,20 +662,10 @@ export default function MarioRunner({
     const piece = currentPieceRef.current;
     if (piece && !gameOverRef.current) {
       let ghostY = piece.y;
-      while (
-        !collides(localBoardRef.current, {
-          ...piece,
-          y: ghostY + 1,
-        })
-      ) {
+      while (!collides(localBoardRef.current, { ...piece, y: ghostY + 1 })) {
         ghostY++;
       }
-      drawPiece(
-        ctx,
-        { ...piece, y: ghostY },
-        CELL_SIZE,
-        true
-      );
+      drawPiece(ctx, { ...piece, y: ghostY }, CELL_SIZE, true);
       drawPiece(ctx, piece, CELL_SIZE, false);
     }
 
@@ -800,12 +725,7 @@ export default function MarioRunner({
     const delta = Math.min(now - lastTimeRef.current, 100);
     lastTimeRef.current = now;
 
-    if (
-      gameStateRef.current === 'menu' ||
-      gameStateRef.current === 'connecting'
-    ) {
-      return;
-    }
+    if (gameStateRef.current === 'menu' || gameStateRef.current === 'connecting') return;
 
     if (gameStateRef.current === 'playing' && !gameOverRef.current) {
       gravityTimerRef.current += delta;
@@ -848,11 +768,10 @@ export default function MarioRunner({
     });
   };
 
+  // ---- FIXED BULLETPROOF HANDSHAKE & WEBSOCKET CHANNEL ----
   const setupChannel = (code: string, host: boolean) => {
     if (channelRef.current) {
-      try {
-        supabase.removeChannel(channelRef.current);
-      } catch {}
+      try { supabase.removeChannel(channelRef.current); } catch {}
       channelRef.current = null;
     }
 
@@ -861,14 +780,11 @@ export default function MarioRunner({
       config: { broadcast: { self: false } },
     });
 
-    channel.on('broadcast', { event: 'HELLO' }, (msg: any) => {
+    // 1. Guest sends JOIN_GAME once upon subscribing
+    channel.on('broadcast', { event: 'JOIN_GAME' }, () => {
       setRivalConnected(true);
-      channel.send({
-        type: 'broadcast',
-        event: 'HELLO',
-        payload: { name: host ? p1Name : p2Name },
-      });
       if (host) {
+        // Host generates random seed ONCE and broadcasts START
         const newSeed = Math.floor(Math.random() * 1000000);
         seedRef.current = newSeed;
         channel.send({
@@ -876,17 +792,19 @@ export default function MarioRunner({
           event: 'START',
           payload: { seed: newSeed },
         });
-        setTimeout(() => startGame(newSeed), 200);
+        startGame(newSeed);
       }
     });
 
+    // 2. Both receive START
     channel.on('broadcast', { event: 'START' }, (msg: any) => {
-      const seed = msg?.payload?.seed ?? Math.floor(Math.random() * 1000000);
+      const seed = msg?.payload?.seed ?? 123456;
       seedRef.current = seed;
       setRivalConnected(true);
       startGame(seed);
     });
 
+    // 3. Sync Rival Board
     channel.on('broadcast', { event: 'SYNC_GRID' }, (msg: any) => {
       if (!msg?.payload) return;
       const { board, score: rScore, lines: rLines } = msg.payload;
@@ -895,6 +813,7 @@ export default function MarioRunner({
       if (typeof rLines === 'number') setRivalLines(rLines);
     });
 
+    // 4. Garbage Attacks
     channel.on('broadcast', { event: 'GARBAGE' }, (msg: any) => {
       const count = msg?.payload?.count || 0;
       pendingGarbageRef.current += count;
@@ -902,12 +821,14 @@ export default function MarioRunner({
       shakeRef.current = Math.min(15, shakeRef.current + count * 2);
     });
 
+    // 5. Game Over / Victory
     channel.on('broadcast', { event: 'GAME_OVER' }, () => {
       if (!gameOverRef.current) {
         handleWin();
       }
     });
 
+    // 6. Rematch
     channel.on('broadcast', { event: 'REMATCH' }, (msg: any) => {
       const seed = msg?.payload?.seed ?? Math.floor(Math.random() * 1000000);
       seedRef.current = seed;
@@ -916,11 +837,10 @@ export default function MarioRunner({
 
     channel.subscribe((status: string) => {
       if (status === 'SUBSCRIBED') {
-        channel.send({
-          type: 'broadcast',
-          event: 'HELLO',
-          payload: { name: host ? p1Name : p2Name },
-        });
+        if (!host) {
+          // Guest sends JOIN_GAME once
+          channel.send({ type: 'broadcast', event: 'JOIN_GAME', payload: {} });
+        }
       }
     });
 
@@ -928,8 +848,10 @@ export default function MarioRunner({
   };
 
   const startGame = (seed: number) => {
+    // Clear old network intervals to prevent timer/memory leaks!
     if (broadcastIntervalRef.current) {
       clearInterval(broadcastIntervalRef.current);
+      broadcastIntervalRef.current = null;
     }
 
     rngRef.current = mulberry32(seed);
@@ -961,7 +883,8 @@ export default function MarioRunner({
 
     lastTimeRef.current = performance.now();
 
-    broadcastIntervalRef.current = setInterval(broadcastSync, 33);
+    // Throttled 15 FPS network grid sync to keep WebSockets light & fast!
+    broadcastIntervalRef.current = setInterval(broadcastSync, 66);
 
     announceEvent('start');
   };
@@ -982,10 +905,7 @@ export default function MarioRunner({
 
   const handleCreateRoom = () => {
     ensureAudio();
-    const code = Math.random()
-      .toString(36)
-      .substring(2, 8)
-      .toUpperCase();
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
     setRoomCode(code);
     setIsHost(true);
     setGameState('connecting');
@@ -1014,9 +934,7 @@ export default function MarioRunner({
 
   const handleBackToMenu = () => {
     if (channelRef.current) {
-      try {
-        supabase.removeChannel(channelRef.current);
-      } catch {}
+      try { supabase.removeChannel(channelRef.current); } catch {}
       channelRef.current = null;
     }
     if (broadcastIntervalRef.current) {
@@ -1071,9 +989,7 @@ export default function MarioRunner({
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       if (broadcastIntervalRef.current) clearInterval(broadcastIntervalRef.current);
       if (channelRef.current) {
-        try {
-          supabase.removeChannel(channelRef.current);
-        } catch {}
+        try { supabase.removeChannel(channelRef.current); } catch {}
         channelRef.current = null;
       }
       if (audioContextRef.current) {
@@ -1173,7 +1089,7 @@ export default function MarioRunner({
     'select-none touch-none flex items-center justify-center rounded-xl bg-white/5 border border-cyan-500/30 active:bg-cyan-500/30 active:scale-95 transition-all text-cyan-300 font-bold shadow-lg shadow-cyan-500/10';
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950 flex items-center justify-center p-2 sm:p-4 overflow-x-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-purple-950 to-slate-950 flex items-center justify-center p-2 sm:p-4 overflow-x-hidden select-none">
       <div className="w-full max-w-5xl">
         {gameState === 'menu' && (
           <div className="flex flex-col items-center gap-8 py-12">
@@ -1186,8 +1102,7 @@ export default function MarioRunner({
                 <Sparkles className="w-8 h-8 text-pink-400" />
               </div>
               <p className="text-slate-400 text-sm sm:text-base">
-                Real-time multiplayer Tetris duel. Clear lines. Send garbage.
-                Survive.
+                Real-time multiplayer Tetris duel. Clear lines. Send garbage. Survive.
               </p>
             </div>
 
@@ -1230,40 +1145,6 @@ export default function MarioRunner({
                 Practice Solo
               </button>
             </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-lg w-full text-xs">
-              <div className="flex items-center gap-2 text-slate-400">
-                <ArrowLeft className="w-4 h-4 text-cyan-400" />
-                <span>Move Left</span>
-              </div>
-              <div className="flex items-center gap-2 text-slate-400">
-                <ArrowRight className="w-4 h-4 text-cyan-400" />
-                <span>Move Right</span>
-              </div>
-              <div className="flex items-center gap-2 text-slate-400">
-                <RotateCw className="w-4 h-4 text-purple-400" />
-                <span>Rotate</span>
-              </div>
-              <div className="flex items-center gap-2 text-slate-400">
-                <ArrowDown className="w-4 h-4 text-pink-400" />
-                <span>Hard Drop</span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-4 text-xs text-slate-500">
-              <span className="flex items-center gap-1">
-                <Award className="w-4 h-4" /> Single: 100pts
-              </span>
-              <span className="flex items-center gap-1">
-                <Zap className="w-4 h-4" /> Double: 300pts + 1 garbage
-              </span>
-              <span className="flex items-center gap-1">
-                <Flame className="w-4 h-4" /> Triple: 500pts + 2 garbage
-              </span>
-              <span className="flex items-center gap-1">
-                <Wind className="w-4 h-4" /> Tetris: 800pts + 4 garbage
-              </span>
-            </div>
           </div>
         )}
 
@@ -1282,9 +1163,6 @@ export default function MarioRunner({
             <p className="text-slate-300 text-lg">
               Waiting for <span className="text-purple-400 font-bold">{rivalName}</span> to join...
             </p>
-            <p className="text-slate-500 text-xs">
-              Share this code with your opponent to begin the battle.
-            </p>
             <button
               onClick={handleBackToMenu}
               className="px-6 py-2 rounded-lg bg-white/5 border border-slate-600 text-slate-300 hover:bg-white/10 transition-all"
@@ -1294,9 +1172,7 @@ export default function MarioRunner({
           </div>
         )}
 
-        {(gameState === 'playing' ||
-          gameState === 'gameover' ||
-          gameState === 'won') && (
+        {(gameState === 'playing' || gameState === 'gameover' || gameState === 'won') && (
           <div className="flex flex-col gap-3">
             {announcement && (
               <div className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-900/60 to-pink-900/60 border border-purple-500/40 text-center text-sm text-purple-200 italic">
@@ -1313,21 +1189,9 @@ export default function MarioRunner({
                     <span className="text-cyan-300 font-bold text-sm sm:text-base">
                       {myName}
                     </span>
-                    {isHost && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold">
-                        HOST
-                      </span>
-                    )}
                   </div>
-                  <button
-                    onClick={toggleMute}
-                    className="p-1 rounded hover:bg-white/10 transition-colors"
-                  >
-                    <Volume2
-                      className={`w-4 h-4 ${
-                        muted ? 'text-slate-600' : 'text-cyan-400'
-                      }`}
-                    />
+                  <button onClick={toggleMute} className="p-1 rounded hover:bg-white/10 transition-colors">
+                    <Volume2 className={`w-4 h-4 ${muted ? 'text-slate-600' : 'text-cyan-400'}`} />
                   </button>
                 </div>
 
@@ -1335,9 +1199,7 @@ export default function MarioRunner({
                   <div className="flex flex-col items-center px-2 py-1.5 rounded bg-white/5 border border-white/10">
                     <Award className="w-3 h-3 text-yellow-400 mb-0.5" />
                     <span className="text-slate-400">Score</span>
-                    <span className="text-white font-bold text-sm">
-                      {score.toLocaleString()}
-                    </span>
+                    <span className="text-white font-bold text-sm">{score.toLocaleString()}</span>
                   </div>
                   <div className="flex flex-col items-center px-2 py-1.5 rounded bg-white/5 border border-white/10">
                     <Sparkles className="w-3 h-3 text-green-400 mb-0.5" />
@@ -1360,49 +1222,25 @@ export default function MarioRunner({
                     style={{ imageRendering: 'pixelated' }}
                   />
                   {(gameState === 'gameover' || gameState === 'won') && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 rounded-lg backdrop-blur-sm">
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 rounded-lg backdrop-blur-sm p-4 text-center">
                       {gameState === 'won' ? (
                         <>
                           <Crown className="w-12 h-12 text-yellow-400 mb-2" />
-                          <p className="text-3xl font-black text-yellow-400 mb-1">
-                            VICTORY!
-                          </p>
-                          <p className="text-slate-300 text-sm mb-4">
-                            You crushed {rivalName}!
-                          </p>
+                          <p className="text-3xl font-black text-yellow-400 mb-1">VICTORY!</p>
+                          <p className="text-slate-300 text-sm mb-4">You outlasted {rivalName}!</p>
                         </>
                       ) : (
                         <>
                           <Heart className="w-12 h-12 text-red-400 mb-2" />
-                          <p className="text-3xl font-black text-red-400 mb-1">
-                            GAME OVER
-                          </p>
-                          <p className="text-slate-300 text-sm mb-4">
-                            {rivalName} outlasted you!
-                          </p>
+                          <p className="text-3xl font-black text-red-400 mb-1">GAME OVER</p>
+                          <p className="text-slate-300 text-sm mb-4">{rivalName} won the match!</p>
                         </>
                       )}
-                      <div className="text-center mb-4">
-                        <p className="text-slate-400 text-xs">Final Score</p>
-                        <p className="text-2xl font-bold text-white">
-                          {score.toLocaleString()}
-                        </p>
-                        <p className="text-slate-400 text-xs mt-1">
-                          {lines} lines cleared
-                        </p>
-                      </div>
                       <button
                         onClick={handleRematch}
-                        className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold shadow-lg shadow-cyan-500/30 transition-all hover:scale-105 active:scale-95 mb-2"
+                        className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold shadow-lg transition-all mb-2"
                       >
-                        <RotateCcw className="w-5 h-5" />
-                        Play Again
-                      </button>
-                      <button
-                        onClick={handleBackToMenu}
-                        className="px-4 py-2 rounded-lg bg-white/5 border border-slate-600 text-slate-300 hover:bg-white/10 transition-all text-sm"
-                      >
-                        Back to Menu
+                        <RotateCcw className="w-5 h-5" /> Instant Rematch
                       </button>
                     </div>
                   )}
@@ -1417,68 +1255,44 @@ export default function MarioRunner({
                         gridTemplateColumns: `repeat(${TETROMINOES[nextPieceType].shape[0].length}, 1fr)`,
                       }}
                     >
-                      {TETROMINOES[nextPieceType].shape
-                        .flat()
-                        .map((cell, i) => (
-                          <div
-                            key={i}
-                            className="w-3 h-3 rounded-sm"
-                            style={{
-                              backgroundColor: cell
-                                ? TETROMINOES[nextPieceType].color
-                                : 'transparent',
-                              boxShadow: cell
-                                ? `0 0 4px ${TETROMINOES[nextPieceType].color}`
-                                : 'none',
-                            }}
-                          />
-                        ))}
+                      {TETROMINOES[nextPieceType].shape.flat().map((cell, i) => (
+                        <div
+                          key={i}
+                          className="w-3 h-3 rounded-sm"
+                          style={{
+                            backgroundColor: cell ? TETROMINOES[nextPieceType].color : 'transparent',
+                          }}
+                        />
+                      ))}
                     </div>
-                  )}
+                  ))}
                   {combo > 1 && (
-                    <span className="ml-auto flex items-center gap-1 text-xs text-orange-400 font-bold">
-                      <Flame className="w-3 h-3" />
-                      {combo}x COMBO
-                    </span>
+                    <span className="ml-auto text-xs text-orange-400 font-bold">{combo}x COMBO</span>
                   )}
                   {pendingGarbageDisplay > 0 && (
-                    <span className="ml-auto flex items-center gap-1 text-xs text-red-400 font-bold animate-pulse">
-                      <Zap className="w-3 h-3" />
-                      +{pendingGarbageDisplay} INCOMING
-                    </span>
+                    <span className="ml-auto text-xs text-red-400 font-bold animate-pulse">+{pendingGarbageDisplay} INCOMING</span>
                   )}
                 </div>
               </div>
 
+              {/* RIVAL BOARD */}
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-white/5 border border-pink-500/30">
                   <div className="flex items-center gap-2">
                     <Target className="w-4 h-4 text-pink-400" />
-                    <span className="text-pink-300 font-bold text-sm">
-                      {rivalName}
-                    </span>
-                    {rivalConnected ? (
-                      <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                    ) : (
-                      <span className="w-2 h-2 rounded-full bg-slate-600" />
-                    )}
+                    <span className="text-pink-300 font-bold text-sm">{rivalName}</span>
+                    {rivalConnected ? <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" /> : <span className="w-2 h-2 rounded-full bg-slate-600" />}
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div className="flex flex-col items-center px-2 py-1.5 rounded bg-white/5 border border-white/10">
-                    <Award className="w-3 h-3 text-yellow-400 mb-0.5" />
                     <span className="text-slate-400">Score</span>
-                    <span className="text-white font-bold text-sm">
-                      {rivalScore.toLocaleString()}
-                    </span>
+                    <span className="text-white font-bold text-sm">{rivalScore.toLocaleString()}</span>
                   </div>
                   <div className="flex flex-col items-center px-2 py-1.5 rounded bg-white/5 border border-white/10">
-                    <Sparkles className="w-3 h-3 text-green-400 mb-0.5" />
                     <span className="text-slate-400">Lines</span>
-                    <span className="text-white font-bold text-sm">
-                      {rivalLines}
-                    </span>
+                    <span className="text-white font-bold text-sm">{rivalLines}</span>
                   </div>
                 </div>
 
@@ -1489,14 +1303,10 @@ export default function MarioRunner({
                   className="rounded-lg border-2 border-pink-500/40 shadow-xl shadow-pink-500/10 max-w-full h-auto"
                   style={{ imageRendering: 'pixelated' }}
                 />
-
-                <div className="flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-slate-400">
-                  <Wind className="w-3 h-3 text-cyan-400" />
-                  <span>Live Rival Board</span>
-                </div>
               </div>
             </div>
 
+            {/* MOBILE TOUCH BUTTONS */}
             {gameState === 'playing' && (
               <div className="lg:hidden flex flex-col gap-2 mt-2">
                 <div className="flex gap-2 justify-center">
@@ -1510,7 +1320,6 @@ export default function MarioRunner({
                     }}
                     onPointerUp={stopMobileDAS}
                     onPointerLeave={stopMobileDAS}
-                    onPointerCancel={stopMobileDAS}
                   >
                     <ArrowLeft className="w-7 h-7" />
                   </button>
@@ -1534,7 +1343,6 @@ export default function MarioRunner({
                     }}
                     onPointerUp={stopMobileDAS}
                     onPointerLeave={stopMobileDAS}
-                    onPointerCancel={stopMobileDAS}
                   >
                     <ArrowRight className="w-7 h-7" />
                   </button>
@@ -1550,10 +1358,8 @@ export default function MarioRunner({
                     }}
                     onPointerUp={stopMobileDAS}
                     onPointerLeave={stopMobileDAS}
-                    onPointerCancel={stopMobileDAS}
                   >
-                    <ArrowDown className="w-5 h-5 mr-1" />
-                    SOFT
+                    <ArrowDown className="w-5 h-5 mr-1" /> SOFT
                   </button>
                   <button
                     className="select-none touch-none flex items-center justify-center rounded-xl w-24 h-12 bg-gradient-to-r from-pink-500/80 to-red-600/80 border border-pink-400/50 active:scale-95 transition-all text-white font-bold text-xs shadow-lg shadow-pink-500/20"
@@ -1563,8 +1369,7 @@ export default function MarioRunner({
                       hardDrop();
                     }}
                   >
-                    <ArrowDown className="w-5 h-5 mr-1" />
-                    HARD
+                    <ArrowDown className="w-5 h-5 mr-1" /> HARD
                   </button>
                 </div>
               </div>
