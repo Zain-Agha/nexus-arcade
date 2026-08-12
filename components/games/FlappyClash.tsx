@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { generateGameAnnounce } from '@/lib/groq';
 import { Shield, Target, Play, RotateCcw, Volume2, Award, Zap, Flame, Wind, Sparkles, Heart, Crown } from 'lucide-react';
@@ -65,7 +65,7 @@ const CANVAS_H = 640;
 const GROUND_H = 80;
 const GRAVITY = 0.35;
 const FLAP_LIFT = -6.5;
-const PIPE_GAP = 150;
+const PIPE_GAP = 160;
 const PIPE_WIDTH = 70;
 const PIPE_SPACING = 240;
 const PIPE_SPEED = 2.4;
@@ -98,6 +98,7 @@ export default function FlappyClash({
   const remoteBirdRef = useRef<BirdState>({ y: CANVAS_H / 2, velocity: 0, alive: true, score: 0, flapFrame: 0, lastFlap: 0 });
   const remoteLastUpdateRef = useRef<number>(Date.now());
   const remoteTargetYRef = useRef<number>(CANVAS_H / 2);
+  const mutedRef = useRef<boolean>(false);
 
   const [roomCode, setRoomCode] = useState<string>('');
   const [isHost, setIsHost] = useState<boolean>(true);
@@ -116,8 +117,13 @@ export default function FlappyClash({
   const myName = isHost ? p1Name : p2Name;
   const oppName = isHost ? p2Name : p1Name;
 
+  useEffect(() => {
+    mutedRef.current = muted;
+  }, [muted]);
+
   // ---- AUDIO (Web Audio API SFX) ----
   function ensureAudio() {
+    if (typeof window === 'undefined') return null;
     if (!audioCtxRef.current) {
       try {
         audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -129,7 +135,7 @@ export default function FlappyClash({
   }
 
   function playTone(freq: number, duration: number, type: OscillatorType, vol: number, slideTo?: number) {
-    if (muted) return;
+    if (mutedRef.current) return;
     const ctx = ensureAudio();
     if (!ctx) return;
     const osc = ctx.createOscillator();
@@ -233,6 +239,42 @@ export default function FlappyClash({
     }
   }
 
+  const flap = useCallback(() => {
+    if (gameStateRef.current !== 'playing') return;
+    if (!localBirdRef.current.alive) return;
+    localBirdRef.current.velocity = FLAP_LIFT;
+    localBirdRef.current.flapFrame = (localBirdRef.current.flapFrame + 1) % 4;
+    localBirdRef.current.lastFlap = Date.now();
+    sfxFlap();
+  }, []);
+
+  function checkBothDead() {
+    const lb = localBirdRef.current;
+    const rb = remoteBirdRef.current;
+    if (!lb.alive && !rb.alive) {
+      if (gameStateRef.current !== 'gameover') {
+        let w: 'p1' | 'p2' | 'tie' = 'tie';
+        if (lb.score > rb.score) w = isHost ? 'p1' : 'p2';
+        else if (rb.score > lb.score) w = isHost ? 'p2' : 'p1';
+        setWinner(w);
+        gameStateRef.current = 'gameover';
+        setGameState('gameover');
+        sfxVictory();
+        announce(w === 'tie' ? "It's a tie! Equally matched flappers!" : `${w === 'p1' ? p1Name : p2Name} wins the clash!`);
+      }
+    } else {
+      setTimeout(() => {
+        if (gameStateRef.current === 'playing' && !localBirdRef.current.alive && remoteBirdRef.current.alive) {
+          if (Date.now() - remoteLastUpdateRef.current > 4000) {
+            remoteBirdRef.current.alive = false;
+            setRemoteAlive(false);
+            checkBothDead();
+          }
+        }
+      }, 4500);
+    }
+  }
+
   // ---- CHANNEL SETUP (BULLETPROOF BROADCAST) ----
   async function setupChannel(code: string, host: boolean) {
     if (channelRef.current) {
@@ -252,11 +294,17 @@ export default function FlappyClash({
         setOpponentJoined(true);
         setConnected(true);
         if (host) {
-          channel.send({ type: 'broadcast', event: 'SYNC_PIPES', payload: { seed: seedRef.current } });
+          channel.send({ type: 'broadcast', event: 'SYNC_SEED', payload: { seed: seedRef.current } });
         }
       })
-      .on('broadcast', { event: 'SYNC_BIRD' }, (payload: any) => {
-        const d = payload.payload;
+      .on('broadcast', { event: 'SYNC_SEED' }, (msg: any) => {
+        const d = msg.payload;
+        if (d && typeof d.seed === 'number' && d.seed !== seedRef.current) {
+          resetGame(d.seed);
+        }
+      })
+      .on('broadcast', { event: 'SYNC_BIRD' }, (msg: any) => {
+        const d = msg.payload;
         if (!d) return;
         remoteBirdRef.current.y = d.y ?? remoteBirdRef.current.y;
         remoteTargetYRef.current = d.y ?? remoteTargetYRef.current;
@@ -268,28 +316,8 @@ export default function FlappyClash({
         setRemoteScore(remoteBirdRef.current.score);
         setRemoteAlive(remoteBirdRef.current.alive);
       })
-      .on('broadcast', { event: 'SYNC_PIPES' }, (payload: any) => {
-        if (host) return;
-        const d = payload.payload;
-        if (d && typeof d.seed === 'number') {
-          seedRef.current = d.seed;
-          setSeed(d.seed);
-          rngRef.current = mulberry32(d.seed);
-          const rng = rngRef.current;
-          const freshPipes: Pipe[] = [];
-          let lastX = CANVAS_W + 120;
-          for (let i = 0; i < 4; i++) {
-            const x = CANVAS_W + 120 + i * PIPE_SPACING;
-            const gapY = 130 + rng() * (CANVAS_H - GROUND_H - PIPE_GAP - 180);
-            freshPipes.push({ x, gapY, passed: false });
-            lastX = x;
-          }
-          pipesRef.current = freshPipes;
-          lastSpawnXRef.current = lastX;
-        }
-      })
-      .on('broadcast', { event: 'REMATCH' }, (payload: any) => {
-        const d = payload.payload;
+      .on('broadcast', { event: 'REMATCH' }, (msg: any) => {
+        const d = msg.payload;
         if (d && typeof d.seed === 'number') {
           resetGame(d.seed);
           gameStateRef.current = 'playing';
@@ -302,11 +330,14 @@ export default function FlappyClash({
         setGameState('playing');
         announce('Both birds are airborne! Flap for your life!');
       })
-      .on('broadcast', { event: 'GAME_OVER' }, (payload: any) => {
-        const d = payload.payload;
+      .on('broadcast', { event: 'GAME_OVER' }, (msg: any) => {
+        const d = msg.payload;
         if (d) {
           if (d.score !== undefined) setRemoteScore(d.score);
           if (d.alive !== undefined) setRemoteAlive(d.alive);
+          if (d.alive !== undefined) remoteBirdRef.current.alive = d.alive;
+          if (d.score !== undefined) remoteBirdRef.current.score = d.score;
+          checkBothDead();
         }
       });
 
@@ -354,11 +385,6 @@ export default function FlappyClash({
     });
   }
 
-  function broadcastPipes() {
-    if (!channelRef.current || !isHost) return;
-    channelRef.current.send({ type: 'broadcast', event: 'SYNC_PIPES', payload: { seed: seedRef.current } });
-  }
-
   // ---- MOUNT EFFECT: Props auto-join ----
   useEffect(() => {
     if (propRoomCode && propPlayerRole) {
@@ -371,7 +397,6 @@ export default function FlappyClash({
       gameStateRef.current = 'playing';
       setGameState('playing');
       if (host) {
-        setTimeout(() => broadcastPipes(), 600);
         setTimeout(() => broadcastStart(), 800);
       }
       announce('Live multiplayer match starting!');
@@ -379,39 +404,26 @@ export default function FlappyClash({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [propRoomCode, propPlayerRole]);
 
-  // ---- GAME LOOP ----
+  // Keyboard listener
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    function flap() {
-      if (gameStateRef.current !== 'playing') return;
-      if (!localBirdRef.current.alive) return;
-      localBirdRef.current.velocity = FLAP_LIFT;
-      localBirdRef.current.flapFrame = (localBirdRef.current.flapFrame + 1) % 4;
-      localBirdRef.current.lastFlap = Date.now();
-      sfxFlap();
-    }
-
     function handleKey(e: KeyboardEvent) {
       if (e.code === 'Space' || e.code === 'ArrowUp') {
         e.preventDefault();
         flap();
       }
     }
-    function handleClick() {
-      flap();
-    }
-    function handleTouch(e: TouchEvent) {
-      e.preventDefault();
-      flap();
-    }
-
     window.addEventListener('keydown', handleKey);
-    canvas.addEventListener('mousedown', handleClick);
-    canvas.addEventListener('touchstart', handleTouch);
+    return () => {
+      window.removeEventListener('keydown', handleKey);
+    };
+  }, [flap]);
+
+  // ---- GAME LOOP ----
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
     function update() {
       frameRef.current++;
@@ -499,9 +511,7 @@ export default function FlappyClash({
           }
         }
         pipesRef.current = pipesRef.current.filter((p) => p.x + PIPE_WIDTH > -10);
-        if (isHost) {
-          spawnPipeIfNeeded();
-        }
+        spawnPipeIfNeeded();
 
         for (const t of tombstonesRef.current) {
           t.rotation = Math.sin(frameRef.current * 0.05) * 0.08;
@@ -514,33 +524,8 @@ export default function FlappyClash({
         popupsRef.current = popupsRef.current.filter((p) => p.life > 0);
       }
 
-      if(ctx)draw(ctx);
+      if(ctx) draw(ctx);
       animationRef.current = requestAnimationFrame(update);
-    }
-
-    function checkBothDead() {
-      const lb = localBirdRef.current;
-      const rb = remoteBirdRef.current;
-      if (!lb.alive && !rb.alive) {
-        let w: 'p1' | 'p2' | 'tie' = 'tie';
-        if (lb.score > rb.score) w = isHost ? 'p1' : 'p2';
-        else if (rb.score > lb.score) w = isHost ? 'p2' : 'p1';
-        setWinner(w);
-        gameStateRef.current = 'gameover';
-        setGameState('gameover');
-        sfxVictory();
-        announce(w === 'tie' ? "It's a tie! Equally matched flappers!" : `${w === 'p1' ? p1Name : p2Name} wins the clash!`);
-      } else {
-        setTimeout(() => {
-          if (gameStateRef.current === 'playing' && !localBirdRef.current.alive && remoteBirdRef.current.alive) {
-            if (Date.now() - remoteLastUpdateRef.current > 4000) {
-              remoteBirdRef.current.alive = false;
-              setRemoteAlive(false);
-              checkBothDead();
-            }
-          }
-        }, 4500);
-      }
     }
 
     function draw(ctx: CanvasRenderingContext2D) {
@@ -756,16 +741,13 @@ export default function FlappyClash({
 
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
-      window.removeEventListener('keydown', handleKey);
-      canvas.removeEventListener('mousedown', handleClick);
-      canvas.removeEventListener('touchstart', handleTouch);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, isHost, muted]);
 
   useEffect(() => {
     if (connected && isHost && opponentJoined && gameState === 'playing') {
-      broadcastPipes();
+      channelRef.current?.send({ type: 'broadcast', event: 'SYNC_SEED', payload: { seed: seedRef.current } });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opponentJoined, connected]);
@@ -789,7 +771,6 @@ export default function FlappyClash({
     await setupChannel(code, true);
     gameStateRef.current = 'playing';
     setGameState('playing');
-    setTimeout(() => broadcastPipes(), 600);
     setTimeout(() => broadcastStart(), 1000);
     announce('Room created! Waiting for rival bird...');
   }
@@ -861,12 +842,14 @@ export default function FlappyClash({
       </div>
 
       {/* Canvas + overlays */}
-      <div className="relative w-full max-w-[480px] aspect-[3/4] rounded-2xl overflow-hidden border-4 border-slate-700 shadow-2xl shadow-cyan-500/20 bg-sky-300">
+      <div className="relative w-full max-w-[420px] aspect-[9/16] rounded-2xl overflow-hidden border-4 border-slate-700 shadow-2xl shadow-cyan-500/20 bg-sky-300">
         <canvas
           ref={canvasRef}
           width={CANVAS_W}
           height={CANVAS_H}
           className="w-full h-full block cursor-pointer touch-none"
+          onMouseDown={flap}
+          onTouchStart={(e) => { e.preventDefault(); flap(); }}
         />
 
         {/* Menu Overlay */}
@@ -947,7 +930,7 @@ export default function FlappyClash({
       </div>
 
       {/* Announcer */}
-      <div className="w-full max-w-[480px] px-4 py-3 rounded-xl bg-slate-800/80 border border-cyan-500/30 flex items-start gap-3">
+      <div className="w-full max-w-[420px] px-4 py-3 rounded-xl bg-slate-800/80 border border-cyan-500/30 flex items-start gap-3">
         <div className="mt-0.5">
           <Sparkles className="w-4 h-4 text-cyan-400 animate-pulse" />
         </div>

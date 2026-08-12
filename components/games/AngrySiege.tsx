@@ -584,7 +584,7 @@ export default function AngrySiege({ roomCode: propRoomCode, playerRole: propPla
     const sling = side === 'left' ? slingshotRef.current.left : slingshotRef.current.right;
     spawnFlyingBird(type, side, sling.x, sling.forkY - 20, vx, vy);
     shotInProgressRef.current = true;
-    setAbilityHint(type === 'yellow' ? 'Click canvas for SPEED BOOST' : type === 'black' ? 'Click canvas for BOMB BLAST' : '');
+    setAbilityHint(type === 'yellow' ? 'Tap canvas for SPEED BOOST' : type === 'black' ? 'Tap canvas for BOMB BLAST' : '');
   };
 
   const handleRemoteAbility = (payload: any) => {
@@ -629,8 +629,8 @@ export default function AngrySiege({ roomCode: propRoomCode, playerRole: propPla
     spawnFlyingBird(type, side, sling.x, sling.forkY - 20, vx, vy);
     shotInProgressRef.current = true;
     setAbilityHint(
-      type === 'yellow' ? 'Click canvas for SPEED BOOST' :
-      type === 'black' ? 'Click canvas for BOMB BLAST' : ''
+      type === 'yellow' ? 'Tap canvas for SPEED BOOST' :
+      type === 'black' ? 'Tap canvas for BOMB BLAST' : ''
     );
     channelRef.current?.send({
       type: 'broadcast', event: 'FIRE_BIRD',
@@ -811,23 +811,31 @@ export default function AngrySiege({ roomCode: propRoomCode, playerRole: propPla
   };
 
   /* ---------------------------------------------------------
-     INPUT HANDLING
+     INPUT HANDLING (UNIFIED POINTER EVENTS FOR MOUSE & TOUCH)
      --------------------------------------------------------- */
-  const getCanvasPos = (e: React.MouseEvent | MouseEvent) => {
+  const getCanvasPos = (e: React.PointerEvent) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
     const scaleX = W / rect.width;
     const scaleY = H / rect.height;
     return {
-      x: ((e as MouseEvent).clientX - rect.left) * scaleX,
-      y: ((e as MouseEvent).clientY - rect.top) * scaleY,
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
     };
   };
 
-  const onCanvasMouseDown = (e: React.MouseEvent) => {
+  const onCanvasPointerDown = (e: React.PointerEvent) => {
     if (screen !== 'game') return;
+    
+    // Prevent scrolling or pinch-zoom on mobile when interacting with the canvas
+    e.preventDefault(); 
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
     const pos = getCanvasPos(e);
+    
     // Mid-air ability trigger
     if (flyingBirdRef.current && flyingBirdRef.current.launched && !flyingBirdRef.current.abilityUsed) {
       const fb = flyingBirdRef.current;
@@ -841,10 +849,12 @@ export default function AngrySiege({ roomCode: propRoomCode, playerRole: propPla
         return;
       }
     }
+    
     // Start slingshot drag only if it's player's turn
     const myTurn = (playerSideRef.current === 'left' && turnRef.current === 1) ||
                    (playerSideRef.current === 'right' && turnRef.current === 2);
     if (!myTurn || shotInProgressRef.current || !loadedBirdRef.current) return;
+    
     const sling = playerSideRef.current === 'left' ? slingshotRef.current.left : slingshotRef.current.right;
     const dx = pos.x - sling.x;
     const dy = pos.y - sling.forkY;
@@ -856,12 +866,20 @@ export default function AngrySiege({ roomCode: propRoomCode, playerRole: propPla
         curX: pos.x,
         curY: pos.y,
       };
+      // Capture pointer so finger sliding off the canvas doesn't break the drag
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch (err) {
+        // Some older browsers might not support setPointerCapture
+      }
       sfx.stretch();
     }
   };
 
-  const onCanvasMouseMove = (e: React.MouseEvent) => {
+  const onCanvasPointerMove = (e: React.PointerEvent) => {
     if (!draggingRef.current.active) return;
+    e.preventDefault();
+    
     const pos = getCanvasPos(e);
     // Clamp drag distance
     const sling = playerSideRef.current === 'left' ? slingshotRef.current.left : slingshotRef.current.right;
@@ -872,12 +890,24 @@ export default function AngrySiege({ roomCode: propRoomCode, playerRole: propPla
     const ratio = dist > maxDrag ? maxDrag / dist : 1;
     draggingRef.current.curX = sling.x + dx * ratio;
     draggingRef.current.curY = sling.y + dy * ratio;
+    
     // Light stretch sound on movement
     if (Math.random() < 0.1) sfx.stretch();
   };
 
-  const onCanvasMouseUp = () => {
+  const onCanvasPointerUp = (e: React.PointerEvent) => {
     if (!draggingRef.current.active) return;
+    e.preventDefault();
+    
+    const canvas = canvasRef.current;
+    if (canvas) {
+      try {
+        canvas.releasePointerCapture(e.pointerId);
+      } catch (err) {
+        // Ignore errors
+      }
+    }
+    
     const sling = playerSideRef.current === 'left' ? slingshotRef.current.left : slingshotRef.current.right;
     const dx = sling.x - draggingRef.current.curX;
     const dy = sling.forkY - draggingRef.current.curY;
@@ -1754,7 +1784,9 @@ export default function AngrySiege({ roomCode: propRoomCode, playerRole: propPla
     (playerSideRef.current === 'right' && turn === 2);
 
   return (
-    <div className="relative w-full h-full min-h-[640px] flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 text-white select-none">
+    // h-[100dvh] fixes PWA/mobile layouts by accounting for mobile browser UI bars dynamically.
+    // overscroll-contain prevents pull-to-refresh from hijacking the game.
+    <div className="relative w-full h-[100dvh] min-h-[640px] flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 text-white select-none overscroll-contain">
       {screen === 'menu' && (
         <div className="w-full max-w-2xl p-8 text-center space-y-8">
           <div className="space-y-2">
@@ -1870,7 +1902,7 @@ export default function AngrySiege({ roomCode: propRoomCode, playerRole: propPla
               </div>
             </div>
 
-            <div className="flex-1 text-center">
+            <div className="flex-1 text-center hidden md:block">
               <div className="text-xs text-slate-400">{LEVELS[level].subtitle}</div>
               <div className="font-bold text-yellow-300">{LEVELS[level].name}</div>
             </div>
@@ -1916,18 +1948,20 @@ export default function AngrySiege({ roomCode: propRoomCode, playerRole: propPla
             </div>
           </div>
 
-          {/* Canvas */}
-          <div className="flex-1 relative bg-black overflow-hidden">
+          {/* Canvas Container */}
+          <div className="flex-1 relative bg-black overflow-hidden flex items-center justify-center">
             <canvas
               ref={canvasRef}
               width={W}
               height={H}
-              onMouseDown={onCanvasMouseDown}
-              onMouseMove={onCanvasMouseMove}
-              onMouseUp={onCanvasMouseUp}
-              onMouseLeave={onCanvasMouseUp}
-              className="w-full h-full object-contain cursor-crosshair"
-              style={{ aspectRatio: `${W}/${H}` }}
+              // Replaced onMouse... with onPointer... for unified touch/mouse support
+              onPointerDown={onCanvasPointerDown}
+              onPointerMove={onCanvasPointerMove}
+              onPointerUp={onCanvasPointerUp}
+              onPointerCancel={onCanvasPointerUp}
+              // touch-none prevents browser scroll/zoom gestures from hijacking the canvas
+              className="max-w-full max-h-full object-contain cursor-crosshair touch-none"
+              style={{ aspectRatio: '16/9' }}
             />
 
             {/* Announcement banner */}
@@ -1968,10 +2002,10 @@ export default function AngrySiege({ roomCode: propRoomCode, playerRole: propPla
                 </div>
               </button>
             ))}
-            <div className="ml-4 text-xs text-slate-400 max-w-xs">
+            <div className="ml-4 text-xs text-slate-400 max-w-xs hidden md:block">
               {selectedBird === 'red' && 'High mass, balanced impact.'}
-              {selectedBird === 'yellow' && 'Click mid-flight for SPEED BOOST.'}
-              {selectedBird === 'black' && 'Click mid-flight for BLAST RADIUS.'}
+              {selectedBird === 'yellow' && 'Tap mid-flight for SPEED BOOST.'}
+              {selectedBird === 'black' && 'Tap mid-flight for BLAST RADIUS.'}
             </div>
           </div>
         </div>

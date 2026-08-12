@@ -117,7 +117,6 @@ export default function MarioRunner({
   const rivalCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const animationFrameRef = useRef<number>(0);
   const broadcastIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const announceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -140,6 +139,7 @@ export default function MarioRunner({
   const scoreRef = useRef(0);
   const linesRef = useRef(0);
   const comboRef = useRef(0);
+  const startInitiatedRef = useRef(false);
   const tickRef = useRef<() => void>(() => {});
 
   const mobileDasTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -162,7 +162,9 @@ export default function MarioRunner({
       try {
         const Ctx = window.AudioContext || (window as any).webkitAudioContext;
         audioContextRef.current = new Ctx();
-      } catch {}
+      } catch {
+        /* AudioContext unavailable */
+      }
     }
     if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
       audioContextRef.current.resume().catch(() => {});
@@ -303,6 +305,8 @@ export default function MarioRunner({
         });
         break;
       }
+      default:
+        break;
     }
   };
 
@@ -562,6 +566,7 @@ export default function MarioRunner({
   const handleGameOver = () => {
     if (gameOverRef.current) return;
     gameOverRef.current = true;
+    startInitiatedRef.current = false;
     setGameState('gameover');
     playSFX('gameOver');
     if (channelRef.current) {
@@ -577,6 +582,7 @@ export default function MarioRunner({
   const handleWin = () => {
     if (gameOverRef.current) return;
     gameOverRef.current = true;
+    startInitiatedRef.current = false;
     setGameState('won');
     playSFX('victory');
     announceEvent('victory');
@@ -768,23 +774,27 @@ export default function MarioRunner({
     });
   };
 
-  // ---- FIXED BULLETPROOF HANDSHAKE & WEBSOCKET CHANNEL ----
   const setupChannel = (code: string, host: boolean) => {
     if (channelRef.current) {
-      try { supabase.removeChannel(channelRef.current); } catch {}
+      try {
+        supabase.removeChannel(channelRef.current);
+      } catch {
+        /* channel already removed */
+      }
       channelRef.current = null;
     }
+
+    startInitiatedRef.current = false;
 
     const channelName = `mario_runner_${code}`;
     const channel = supabase.channel(channelName, {
       config: { broadcast: { self: false } },
     });
 
-    // 1. Guest sends JOIN_GAME once upon subscribing
-    channel.on('broadcast', { event: 'JOIN_GAME' }, () => {
+    channel.on('broadcast', { event: 'JOIN_GAME' }, (msg: any) => {
       setRivalConnected(true);
-      if (host) {
-        // Host generates random seed ONCE and broadcasts START
+      if (host && !startInitiatedRef.current) {
+        startInitiatedRef.current = true;
         const newSeed = Math.floor(Math.random() * 1000000);
         seedRef.current = newSeed;
         channel.send({
@@ -796,15 +806,15 @@ export default function MarioRunner({
       }
     });
 
-    // 2. Both receive START
     channel.on('broadcast', { event: 'START' }, (msg: any) => {
+      if (startInitiatedRef.current) return;
+      startInitiatedRef.current = true;
       const seed = msg?.payload?.seed ?? 123456;
       seedRef.current = seed;
       setRivalConnected(true);
       startGame(seed);
     });
 
-    // 3. Sync Rival Board
     channel.on('broadcast', { event: 'SYNC_GRID' }, (msg: any) => {
       if (!msg?.payload) return;
       const { board, score: rScore, lines: rLines } = msg.payload;
@@ -813,32 +823,31 @@ export default function MarioRunner({
       if (typeof rLines === 'number') setRivalLines(rLines);
     });
 
-    // 4. Garbage Attacks
     channel.on('broadcast', { event: 'GARBAGE' }, (msg: any) => {
       const count = msg?.payload?.count || 0;
-      pendingGarbageRef.current += count;
-      setPendingGarbageDisplay(pendingGarbageRef.current);
-      shakeRef.current = Math.min(15, shakeRef.current + count * 2);
+      if (count > 0) {
+        pendingGarbageRef.current += count;
+        setPendingGarbageDisplay(pendingGarbageRef.current);
+        shakeRef.current = Math.min(15, shakeRef.current + count * 2);
+      }
     });
 
-    // 5. Game Over / Victory
-    channel.on('broadcast', { event: 'GAME_OVER' }, () => {
+    channel.on('broadcast', { event: 'GAME_OVER' }, (msg: any) => {
       if (!gameOverRef.current) {
         handleWin();
       }
     });
 
-    // 6. Rematch
     channel.on('broadcast', { event: 'REMATCH' }, (msg: any) => {
       const seed = msg?.payload?.seed ?? Math.floor(Math.random() * 1000000);
       seedRef.current = seed;
+      startInitiatedRef.current = true;
       startGame(seed);
     });
 
     channel.subscribe((status: string) => {
       if (status === 'SUBSCRIBED') {
         if (!host) {
-          // Guest sends JOIN_GAME once
           channel.send({ type: 'broadcast', event: 'JOIN_GAME', payload: {} });
         }
       }
@@ -848,7 +857,6 @@ export default function MarioRunner({
   };
 
   const startGame = (seed: number) => {
-    // Clear old network intervals to prevent timer/memory leaks!
     if (broadcastIntervalRef.current) {
       clearInterval(broadcastIntervalRef.current);
       broadcastIntervalRef.current = null;
@@ -883,7 +891,6 @@ export default function MarioRunner({
 
     lastTimeRef.current = performance.now();
 
-    // Throttled 15 FPS network grid sync to keep WebSockets light & fast!
     broadcastIntervalRef.current = setInterval(broadcastSync, 66);
 
     announceEvent('start');
@@ -893,6 +900,7 @@ export default function MarioRunner({
     ensureAudio();
     const newSeed = Math.floor(Math.random() * 1000000);
     seedRef.current = newSeed;
+    startInitiatedRef.current = true;
     if (channelRef.current) {
       channelRef.current.send({
         type: 'broadcast',
@@ -929,12 +937,17 @@ export default function MarioRunner({
     setRivalConnected(false);
     const seed = Math.floor(Math.random() * 1000000);
     seedRef.current = seed;
+    startInitiatedRef.current = true;
     startGame(seed);
   };
 
   const handleBackToMenu = () => {
     if (channelRef.current) {
-      try { supabase.removeChannel(channelRef.current); } catch {}
+      try {
+        supabase.removeChannel(channelRef.current);
+      } catch {
+        /* channel already removed */
+      }
       channelRef.current = null;
     }
     if (broadcastIntervalRef.current) {
@@ -942,6 +955,7 @@ export default function MarioRunner({
       broadcastIntervalRef.current = null;
     }
     gameOverRef.current = false;
+    startInitiatedRef.current = false;
     setRivalConnected(false);
     setGameState('menu');
     setRoomCode('');
@@ -986,10 +1000,16 @@ export default function MarioRunner({
       setupChannel(propRoomCode, host);
     }
     return () => {
-      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-      if (broadcastIntervalRef.current) clearInterval(broadcastIntervalRef.current);
+      if (broadcastIntervalRef.current) {
+        clearInterval(broadcastIntervalRef.current);
+        broadcastIntervalRef.current = null;
+      }
       if (channelRef.current) {
-        try { supabase.removeChannel(channelRef.current); } catch {}
+        try {
+          supabase.removeChannel(channelRef.current);
+        } catch {
+          /* channel already removed */
+        }
         channelRef.current = null;
       }
       if (audioContextRef.current) {
@@ -1058,6 +1078,8 @@ export default function MarioRunner({
         case ' ':
           e.preventDefault();
           hardDrop();
+          break;
+        default:
           break;
       }
     };
@@ -1247,6 +1269,7 @@ export default function MarioRunner({
                 </div>
 
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
+                  <Wind className="w-3 h-3 text-cyan-400" />
                   <span className="text-xs text-slate-400">Next:</span>
                   {nextPieceType && (
                     <div
@@ -1265,9 +1288,12 @@ export default function MarioRunner({
                         />
                       ))}
                     </div>
-                  ))}
+                  )}
                   {combo > 1 && (
-                    <span className="ml-auto text-xs text-orange-400 font-bold">{combo}x COMBO</span>
+                    <span className="ml-auto text-xs text-orange-400 font-bold flex items-center gap-1">
+                      <Zap className="w-3 h-3" />
+                      {combo}x COMBO
+                    </span>
                   )}
                   {pendingGarbageDisplay > 0 && (
                     <span className="ml-auto text-xs text-red-400 font-bold animate-pulse">+{pendingGarbageDisplay} INCOMING</span>
@@ -1275,13 +1301,16 @@ export default function MarioRunner({
                 </div>
               </div>
 
-              {/* RIVAL BOARD */}
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-white/5 border border-pink-500/30">
                   <div className="flex items-center gap-2">
                     <Target className="w-4 h-4 text-pink-400" />
                     <span className="text-pink-300 font-bold text-sm">{rivalName}</span>
-                    {rivalConnected ? <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" /> : <span className="w-2 h-2 rounded-full bg-slate-600" />}
+                    {rivalConnected ? (
+                      <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                    ) : (
+                      <span className="w-2 h-2 rounded-full bg-slate-600" />
+                    )}
                   </div>
                 </div>
 
@@ -1306,7 +1335,6 @@ export default function MarioRunner({
               </div>
             </div>
 
-            {/* MOBILE TOUCH BUTTONS */}
             {gameState === 'playing' && (
               <div className="lg:hidden flex flex-col gap-2 mt-2">
                 <div className="flex gap-2 justify-center">
