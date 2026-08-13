@@ -1,326 +1,250 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { supabase } from '@/lib/supabase';
-import AngrySiegeComponent from '@/components/games/AngrySiege';
-import FruitBladeComponent from '@/components/games/FruitBlade';
-import FlappyClashComponent from '@/components/games/FlappyClash';
-import MarioRunnerComponent from '@/components/games/MarioRunner';
-import { Shield, Users, Sparkles, LogOut, Trophy, Zap, Flame, Wind, User } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createClient, RealtimeChannel } from '@supabase/supabase-js';
+import FlappyClash from '@/components/games/FlappyClash';
+import MarioRunner from '@/components/games/MarioRunner';
 
-// Cast imported game components to bypass strict build-time prop checking
-const AngrySiege = AngrySiegeComponent as React.ComponentType<any>;
-const FruitBlade = FruitBladeComponent as React.ComponentType<any>;
-const FlappyClash = FlappyClashComponent as React.ComponentType<any>;
-const MarioRunner = MarioRunnerComponent as React.ComponentType<any>;
+// Supabase Initialization (Fallback to BroadcastChannel for local testing if keys are missing)
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const hasSupabase = supabaseUrl.startsWith('http') && supabaseKey.length > 0;
+const supabase = hasSupabase ? createClient(supabaseUrl, supabaseKey) : null;
 
-export default function Home() {
-  const [roomCode, setRoomCode] = useState<string>('');
-  const [inputCode, setInputCode] = useState<string>('');
-  const [userName, setUserName] = useState<string>('');
-  const [p1Name, setP1Name] = useState<string>('Player 1');
-  const [p2Name, setP2Name] = useState<string>('Player 2');
+export default function ArcadeSwitchboard() {
+  const [playerName, setPlayerName] = useState('');
+  const [roomCode, setRoomCode] = useState('');
+  const [joinCode, setJoinCode] = useState('');
+  const [appState, setAppState] = useState<'LOGIN' | 'HUB' | 'GAME_1' | 'GAME_2'>('LOGIN');
   const [playerRole, setPlayerRole] = useState<'p1' | 'p2' | null>(null);
-  const [connected, setConnected] = useState<boolean>(false);
-  const [activeGame, setActiveGame] = useState<string | null>(null);
-  const [error, setError] = useState<string>('');
-  const channelRef = useRef<any>(null);
+  
+  const [p1Name, setP1Name] = useState('Player 1');
+  const [p2Name, setP2Name] = useState('Waiting...');
 
-  // --- GLOBAL ROOM WEBSOCKET SUBSCRIPTION ---
-  const subscribeToArcadeRoom = (code: string, role: 'p1' | 'p2', myName: string) => {
-    if (channelRef.current) {
-      try { channelRef.current.unsubscribe(); } catch {}
+  // PubSub Abstraction References
+  const channelRef = useRef<RealtimeChannel | null>(null);
+  const bcRef = useRef<BroadcastChannel | null>(null);
+  const listenersRef = useRef<Record<string, ((payload: any) => void)[]>>({});
+
+  // Unified PubSub Interface passed to Games
+  const broadcastPayload = useCallback((event: string, payload: any) => {
+    if (hasSupabase && channelRef.current) {
+      channelRef.current.send({ type: 'broadcast', event, payload });
+    } else if (bcRef.current) {
+      bcRef.current.postMessage({ event, payload });
     }
+  }, []);
 
-    const ch = supabase.channel(`nexus_arcade_${code}`, {
-      config: { broadcast: { self: false } },
-    });
-
-    ch.on('broadcast', { event: 'JOIN_ARCADE' }, (msg: any) => {
-      setConnected(true);
-      const guestName = msg?.payload?.name || 'Player 2';
-      setP2Name(guestName);
-      if (role === 'p1') {
-        ch.send({
-          type: 'broadcast',
-          event: 'ARCADE_CONNECTED',
-          payload: { p1Name: myName || 'Player 1', p2Name: guestName },
-        });
-      }
-    })
-      .on('broadcast', { event: 'ARCADE_CONNECTED' }, (msg: any) => {
-        setConnected(true);
-        if (msg?.payload) {
-          setP1Name(msg.payload.p1Name || 'Player 1');
-          setP2Name(msg.payload.p2Name || 'Player 2');
-        }
-      })
-      .on('broadcast', { event: 'LAUNCH_GAME' }, (msg: any) => {
-        setActiveGame(msg?.payload?.gameId);
-      })
-      .on('broadcast', { event: 'RETURN_TO_HUB' }, () => {
-        setActiveGame(null);
-      });
-
-    ch.subscribe((status: string) => {
-      if (status === 'SUBSCRIBED') {
-        if (role === 'p2') {
-          ch.send({
-            type: 'broadcast',
-            event: 'JOIN_ARCADE',
-            payload: { name: myName || 'Player 2' },
-          });
-          setConnected(true);
-        }
-      }
-    });
-
-    channelRef.current = ch;
-  };
-
-  const createArcadeRoom = () => {
-    const code = Math.floor(1000 + Math.random() * 9000).toString();
-    const hostName = userName.trim() || 'Player 1';
-    setP1Name(hostName);
-    setRoomCode(code);
-    setPlayerRole('p1');
-    subscribeToArcadeRoom(code, 'p1', hostName);
-    setError('');
-  };
-
-  const joinArcadeRoom = () => {
-    if (!/^\d{4}$/.test(inputCode)) {
-      setError('Enter a valid 4-digit code');
-      return;
-    }
-    const guestName = userName.trim() || 'Player 2';
-    setP2Name(guestName);
-    setRoomCode(inputCode);
-    setPlayerRole('p2');
-    subscribeToArcadeRoom(inputCode, 'p2', guestName);
-    setError('');
-  };
-
-  const launchGame = (gameId: string) => {
-    if (!connected && playerRole === 'p1') {
-      alert('Wait for Player 2 to connect before launching!');
-      return;
-    }
-    setActiveGame(gameId);
-    channelRef.current?.send({
-      type: 'broadcast',
-      event: 'LAUNCH_GAME',
-      payload: { gameId },
-    });
-  };
-
-  const returnToHub = () => {
-    setActiveGame(null);
-    channelRef.current?.send({
-      type: 'broadcast',
-      event: 'RETURN_TO_HUB',
-      payload: {},
-    });
-  };
-
-  const leaveRoom = () => {
-    if (channelRef.current) {
-      try { channelRef.current.unsubscribe(); } catch {}
-      channelRef.current = null;
-    }
-    setRoomCode('');
-    setInputCode('');
-    setPlayerRole(null);
-    setConnected(false);
-    setActiveGame(null);
-  };
-
-  useEffect(() => {
+  const subscribePayload = useCallback((event: string, callback: (payload: any) => void) => {
+    if (!listenersRef.current[event]) listenersRef.current[event] = [];
+    listenersRef.current[event].push(callback);
     return () => {
-      if (channelRef.current) {
-        try { channelRef.current.unsubscribe(); } catch {}
-      }
+      listenersRef.current[event] = listenersRef.current[event].filter(cb => cb !== callback);
     };
   }, []);
 
-  return (
-    <main className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4 select-none">
-      {/* 1. ROOM CREATION / JOIN SCREEN */}
-      {!roomCode && (
-        <div className="max-w-2xl w-full text-center space-y-8 bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl">
-          <div className="space-y-3">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 text-sm font-semibold">
-              <Sparkles className="w-4 h-4 text-cyan-400" /> NEXT-GEN MULTIPLAYER ARCADE
-            </div>
-            <h1 className="text-5xl font-extrabold tracking-wider bg-gradient-to-r from-cyan-400 via-fuchsia-500 to-yellow-400 bg-clip-text text-transparent">
-              NEXUS ARCADE
-            </h1>
-            <p className="text-slate-400">Enter your name & connect with a 4-digit code to play together!</p>
-          </div>
+  // Internal Message Router for Local BroadcastChannel Simulation
+  useEffect(() => {
+    if (!hasSupabase && bcRef.current) {
+      const handleMessage = (e: MessageEvent) => {
+        const { event, payload } = e.data;
+        if (listenersRef.current[event]) {
+          listenersRef.current[event].forEach(cb => cb(payload));
+        }
+      };
+      bcRef.current.addEventListener('message', handleMessage);
+      return () => bcRef.current?.removeEventListener('message', handleMessage);
+    }
+  }, [roomCode]);
 
-          {/* NAME INPUT FIELD */}
-          <div className="max-w-sm mx-auto space-y-1 text-left">
-            <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
-              <User className="w-3.5 h-3.5 text-cyan-400" /> YOUR PLAYER NAME:
-            </label>
-            <input
-              type="text"
-              maxLength={12}
-              value={userName}
-              onChange={(e) => setUserName(e.target.value)}
-              placeholder="e.g. Alex"
-              className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white font-bold text-lg focus:outline-none focus:border-cyan-400"
-            />
-          </div>
+  // Network Connection Logic
+  const connectToRoom = async (code: string, role: 'p1' | 'p2', name: string) => {
+    setRoomCode(code);
+    setPlayerRole(role);
+    if (role === 'p1') setP1Name(name);
+    else setP2Name(name);
 
-          <div className="grid md:grid-cols-2 gap-6">
-            <button
-              onClick={createArcadeRoom}
-              className="p-6 bg-gradient-to-br from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 rounded-2xl text-left transition hover:scale-[1.02] shadow-lg shadow-cyan-900/30"
-            >
-              <Shield className="w-8 h-8 mb-3 text-white" />
-              <div className="text-xl font-bold">Host Arcade Session</div>
-              <div className="text-sm text-cyan-100/80">Get a code & invite Player 2</div>
-            </button>
+    if (hasSupabase) {
+      const channel = supabase!.channel(`arcade-${code}`);
+      channel.on('broadcast', { event: '*' }, (msg) => {
+        const { event, payload } = msg;
+        if (listenersRef.current[event]) {
+          listenersRef.current[event].forEach(cb => cb(payload));
+        }
+      });
+      channel.subscribe((status) => {
+        if (status === 'SUBSCRIBED' && role === 'p2') {
+          channel.send({ type: 'broadcast', event: 'JOIN_GAME', payload: { p2Name: name } });
+        }
+      });
+      channelRef.current = channel;
+    } else {
+      bcRef.current = new BroadcastChannel(`arcade-${code}`);
+      if (role === 'p2') {
+        setTimeout(() => {
+          bcRef.current?.postMessage({ event: 'JOIN_GAME', payload: { p2Name: name } });
+        }, 500);
+      }
+    }
+    setAppState('HUB');
+  };
 
-            <div className="p-6 bg-slate-800/80 border border-slate-700 rounded-2xl text-left space-y-3">
-              <Users className="w-8 h-8 text-fuchsia-400" />
-              <div className="text-xl font-bold">Join Arcade Session</div>
-              <input
-                value={inputCode}
-                onChange={(e) => setInputCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                placeholder="4-digit code"
-                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-center text-2xl tracking-[0.4em] font-bold focus:outline-none focus:border-fuchsia-400"
-              />
-              <button
-                onClick={joinArcadeRoom}
-                disabled={inputCode.length !== 4}
-                className="w-full py-2 bg-fuchsia-500 hover:bg-fuchsia-400 disabled:opacity-40 rounded-lg font-bold text-slate-950 transition"
-              >
-                Connect To Session
-              </button>
-              {error && <div className="text-red-400 text-xs text-center">{error}</div>}
-            </div>
-          </div>
-        </div>
-      )}
+  const hostSession = () => {
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
+    connectToRoom(code, 'p1', playerName || 'Player 1');
+  };
 
-      {/* 2. ARCADE GAME SWITCHBOARD MENU (ROOM ACTIVE) */}
-      {roomCode && !activeGame && (
-        <div className="max-w-4xl w-full space-y-6">
-          <div className="flex justify-between items-center bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+  const joinSession = () => {
+    if (joinCode.length === 4) {
+      connectToRoom(joinCode, 'p2', playerName || 'Player 2');
+    }
+  };
+
+  // Switchboard Core Network Listeners
+  useEffect(() => {
+    const unsubJoin = subscribePayload('JOIN_GAME', (payload) => {
+      if (playerRole === 'p1') {
+        setP2Name(payload.p2Name);
+        // 1-way handshake complete, Host sends HUB_STATE to sync everyone
+        broadcastPayload('HUB_STATE', { p1Name, p2Name: payload.p2Name });
+      }
+    });
+
+    const unsubHubSync = subscribePayload('HUB_STATE', (payload) => {
+      setP1Name(payload.p1Name);
+      setP2Name(payload.p2Name);
+    });
+
+    const unsubLaunch = subscribePayload('LAUNCH_GAME', (payload) => {
+      setAppState(payload.gameId);
+    });
+
+    const unsubReturn = subscribePayload('RETURN_TO_HUB', () => {
+      setAppState('HUB');
+    });
+
+    return () => { unsubJoin(); unsubHubSync(); unsubLaunch(); unsubReturn(); };
+  }, [playerRole, p1Name, p2Name, subscribePayload, broadcastPayload]);
+
+  const launchGame = (gameId: 'GAME_1' | 'GAME_2') => {
+    if (playerRole === 'p1') {
+      broadcastPayload('LAUNCH_GAME', { gameId });
+      setAppState(gameId);
+    }
+  };
+
+  const returnToHub = () => {
+    broadcastPayload('RETURN_TO_HUB', {});
+    setAppState('HUB');
+  };
+
+  // UI Renders
+  if (appState === 'LOGIN') {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 font-sans text-slate-100">
+        <div className="max-w-sm w-full bg-slate-900 rounded-2xl p-6 shadow-2xl border border-slate-800">
+          <h1 className="text-2xl font-black text-center mb-6 tracking-widest text-indigo-400">NEXUS ARCADE</h1>
+          <div className="space-y-6">
             <div>
-              <div className="text-xs text-slate-400">ARCADE SESSION CODE</div>
-              <div className="text-3xl font-black text-cyan-400 tracking-wider font-mono">{roomCode}</div>
-              <div className="text-xs text-slate-300 mt-1">
-                Players: <span className="font-bold text-cyan-400">{p1Name}</span> (P1) vs{' '}
-                <span className="font-bold text-fuchsia-400">{p2Name}</span> (P2)
-              </div>
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">Your Name</label>
+              <input 
+                type="text" 
+                value={playerName} 
+                onChange={e => setPlayerName(e.target.value)}
+                placeholder="Enter Name"
+                className="w-full bg-slate-800 border-2 border-slate-700 rounded-lg px-4 py-3 text-white outline-none focus:border-indigo-500 transition-colors"
+                maxLength={12}
+              />
             </div>
-
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-sm">
-                <span className={`w-3 h-3 rounded-full ${connected ? 'bg-emerald-400 animate-pulse' : 'bg-yellow-400 animate-ping'}`} />
-                <span>{connected ? `${p2Name} Connected!` : 'Waiting for Player 2...'}</span>
-              </div>
-              <button
-                onClick={leaveRoom}
-                className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-xl transition"
-                title="Disconnect Session"
-              >
-                <LogOut className="w-5 h-5" />
+            <div className="pt-4 border-t border-slate-800">
+              <button onClick={hostSession} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg transition-all active:scale-95 mb-4 shadow-lg shadow-indigo-900/50">
+                Host New Session
               </button>
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  value={joinCode} 
+                  onChange={e => setJoinCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  placeholder="Code"
+                  className="w-24 bg-slate-800 border-2 border-slate-700 rounded-lg px-4 py-3 text-center text-white outline-none focus:border-emerald-500 transition-colors tracking-widest"
+                />
+                <button onClick={joinSession} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-4 rounded-lg transition-all active:scale-95 shadow-lg shadow-emerald-900/50">
+                  Join Session
+                </button>
+              </div>
             </div>
           </div>
-
-          <div className="text-center">
-            <h2 className="text-2xl font-bold text-white">Select a Game to Launch</h2>
-            <p className="text-sm text-slate-400">
-              {playerRole === 'p1' ? `Click any game to launch it for both ${p1Name} and ${p2Name}!` : `${p1Name} is selecting a game...`}
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <button
-              onClick={() => launchGame('angry')}
-              disabled={playerRole !== 'p1'}
-              className="p-6 bg-slate-900 border border-slate-800 hover:border-red-500 rounded-2xl transition text-left hover:scale-[1.02] disabled:opacity-60"
-            >
-              <div className="flex justify-between items-start mb-2">
-                <h3 className="text-xl font-bold text-red-400">🏹 Angry Siege</h3>
-                <Flame className="w-5 h-5 text-red-400" />
-              </div>
-              <p className="text-xs text-slate-400">2D Slingshot Castle Siege & Physics Destruction</p>
-            </button>
-
-            <button
-              onClick={() => launchGame('fruit')}
-              disabled={playerRole !== 'p1'}
-              className="p-6 bg-slate-900 border border-slate-800 hover:border-cyan-500 rounded-2xl transition text-left hover:scale-[1.02] disabled:opacity-60"
-            >
-              <div className="flex justify-between items-start mb-2">
-                <h3 className="text-xl font-bold text-cyan-400">⚔️ Fruit Blade Battle</h3>
-                <Zap className="w-5 h-5 text-cyan-400" />
-              </div>
-              <p className="text-xs text-slate-400">Real-time Slicing Duel & Combo Streak Challenge</p>
-            </button>
-
-            <button
-              onClick={() => launchGame('flappy')}
-              disabled={playerRole !== 'p1'}
-              className="p-6 bg-slate-900 border border-slate-800 hover:border-yellow-500 rounded-2xl transition text-left hover:scale-[1.02] disabled:opacity-60"
-            >
-              <div className="flex justify-between items-start mb-2">
-                <h3 className="text-xl font-bold text-yellow-400">🐥 Flappy Clash</h3>
-                <Wind className="w-5 h-5 text-yellow-400" />
-              </div>
-              <p className="text-xs text-slate-400">Ghost Race, Tethered Co-Op & Speed Rush</p>
-            </button>
-
-            <button
-              onClick={() => launchGame('mario')}
-              disabled={playerRole !== 'p1'}
-              className="p-6 bg-slate-900 border border-slate-800 hover:border-purple-500 rounded-2xl transition text-left hover:scale-[1.02] disabled:opacity-60"
-            >
-              <div className="flex justify-between items-start mb-2">
-                <h3 className="text-xl font-bold text-purple-400">🧩 Block Drop Battle</h3>
-                <Trophy className="w-5 h-5 text-purple-400" />
-              </div>
-              <p className="text-xs text-slate-400">Competitive Tetris Duel & Garbage Line Attacks</p>
-            </button>
-          </div>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {/* 3. ACTIVE GAME CONTAINER */}
-      {roomCode && activeGame && (
-        <div className="w-full max-w-5xl flex flex-col items-center">
-          <div className="w-full flex justify-between items-center mb-3">
-            <button
-              onClick={returnToHub}
-              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded-xl transition flex items-center gap-2"
-            >
-              ← Leave Game & Return to Arcade Hub
+  if (appState === 'HUB') {
+    return (
+      <div className="min-h-screen bg-slate-950 p-4 sm:p-8 font-sans text-slate-100">
+        <div className="max-w-4xl mx-auto">
+          <header className="bg-slate-900 rounded-2xl p-6 mb-8 border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">Session Code</p>
+              <h2 className="text-4xl font-black text-white tracking-widest">{roomCode}</h2>
+            </div>
+            <div className="bg-slate-950 px-6 py-4 rounded-xl border border-slate-800 flex items-center gap-4">
+              <span className="font-bold text-indigo-400">{p1Name}</span>
+              <span className="text-xs text-slate-600 font-black italic">VS</span>
+              <span className={`font-bold ${p2Name === 'Waiting...' ? 'text-slate-500 animate-pulse' : 'text-emerald-400'}`}>
+                {p2Name}
+              </span>
+            </div>
+          </header>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <button onClick={() => launchGame('GAME_1')} disabled={playerRole !== 'p1' || p2Name === 'Waiting...'} className="group bg-slate-900 rounded-2xl p-6 border-2 border-slate-800 hover:border-indigo-500 text-left transition-all disabled:opacity-50 disabled:hover:border-slate-800">
+              <div className="bg-indigo-950 text-indigo-400 w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl mb-4 group-hover:scale-110 transition-transform">1</div>
+              <h3 className="text-xl font-black text-white mb-2">Flappy Clash</h3>
+              <p className="text-sm text-slate-400">Survival race with floaty physics & ghost rivals.</p>
+              {playerRole !== 'p1' && <p className="text-xs text-rose-400 mt-4 font-bold">Only Host can launch</p>}
             </button>
-            <div className="text-xs font-mono text-cyan-400 bg-slate-900 px-3 py-1 rounded-lg border border-slate-800">
-              Session Code: {roomCode} | {p1Name} (P1) vs {p2Name} (P2)
+            <button onClick={() => launchGame('GAME_2')} disabled={playerRole !== 'p1' || p2Name === 'Waiting...'} className="group bg-slate-900 rounded-2xl p-6 border-2 border-slate-800 hover:border-emerald-500 text-left transition-all disabled:opacity-50 disabled:hover:border-slate-800">
+              <div className="bg-emerald-950 text-emerald-400 w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl mb-4 group-hover:scale-110 transition-transform">2</div>
+              <h3 className="text-xl font-black text-white mb-2">Block Drop Battle</h3>
+              <p className="text-sm text-slate-400">Action puzzle. Clear lines to send garbage!</p>
+              {playerRole !== 'p1' && <p className="text-xs text-rose-400 mt-4 font-bold">Only Host can launch</p>}
+            </button>
+            <div className="bg-slate-900/50 rounded-2xl p-6 border border-slate-800 border-dashed flex flex-col items-center justify-center min-h-[200px]">
+              <span className="text-slate-600 font-bold uppercase tracking-widest text-sm">Game Slot 3 (Locked)</span>
+            </div>
+            <div className="bg-slate-900/50 rounded-2xl p-6 border border-slate-800 border-dashed flex flex-col items-center justify-center min-h-[200px]">
+              <span className="text-slate-600 font-bold uppercase tracking-widest text-sm">Game Slot 4 (Locked)</span>
             </div>
           </div>
-
-          {activeGame === 'angry' && (
-            <AngrySiege roomCode={roomCode} playerRole={playerRole || 'p1'} p1Name={p1Name} p2Name={p2Name} />
-          )}
-          {activeGame === 'fruit' && (
-            <FruitBlade roomCode={roomCode} playerRole={playerRole || 'p1'} p1Name={p1Name} p2Name={p2Name} />
-          )}
-          {activeGame === 'flappy' && (
-            <FlappyClash roomCode={roomCode} playerRole={playerRole || 'p1'} p1Name={p1Name} p2Name={p2Name} />
-          )}
-          {activeGame === 'mario' && (
-            <MarioRunner roomCode={roomCode} playerRole={playerRole || 'p1'} p1Name={p1Name} p2Name={p2Name} />
-          )}
         </div>
-      )}
-    </main>
+      </div>
+    );
+  }
+
+  // Active Game Wrapper
+  return (
+    <div className="min-h-screen bg-slate-950 flex flex-col touch-none select-none">
+      <div className="bg-slate-900 px-4 py-3 flex items-center justify-between border-b border-slate-800 safe-top">
+        <button onClick={returnToHub} className="text-xs font-bold text-slate-400 hover:text-white uppercase tracking-wider flex items-center gap-2 transition-colors">
+          <span>← Return to Hub</span>
+        </button>
+        <div className="text-xs font-bold text-slate-500 tracking-widest">{roomCode}</div>
+      </div>
+      <div className="flex-1 w-full relative overflow-hidden flex items-center justify-center">
+        {appState === 'GAME_1' && (
+          <FlappyClash 
+            roomCode={roomCode} playerRole={playerRole!} p1Name={p1Name} p2Name={p2Name} 
+            broadcastPayload={broadcastPayload} subscribePayload={subscribePayload} 
+          />
+        )}
+        {appState === 'GAME_2' && (
+          <MarioRunner 
+            roomCode={roomCode} playerRole={playerRole!} p1Name={p1Name} p2Name={p2Name} 
+            broadcastPayload={broadcastPayload} subscribePayload={subscribePayload} 
+          />
+        )}
+      </div>
+    </div>
   );
 }
