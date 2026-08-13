@@ -5,7 +5,7 @@ import { createClient, RealtimeChannel } from '@supabase/supabase-js';
 import FlappyClash from '@/components/games/FlappyClash';
 import MarioRunner from '@/components/games/MarioRunner';
 
-// Supabase Initialization (Fallback to BroadcastChannel for local testing if keys are missing)
+// Supabase Initialization (Fallback to BroadcastChannel for local testing)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const hasSupabase = supabaseUrl.startsWith('http') && supabaseKey.length > 0;
@@ -28,10 +28,17 @@ export default function ArcadeSwitchboard() {
 
   // Unified PubSub Interface passed to Games
   const broadcastPayload = useCallback((event: string, payload: any) => {
+    // 1. Send to network (Remote Player)
     if (hasSupabase && channelRef.current) {
       channelRef.current.send({ type: 'broadcast', event, payload });
     } else if (bcRef.current) {
       bcRef.current.postMessage({ event, payload });
+    }
+
+    // 2. ECHO LOCALLY (Crucial Fix: Ensures the sender also processes their own broadcasts
+    //    so the Host or Rematcher doesn't get stuck waiting for their own event)
+    if (listenersRef.current[event]) {
+      listenersRef.current[event].forEach((cb) => cb(payload));
     }
   }, []);
 
@@ -126,16 +133,13 @@ export default function ArcadeSwitchboard() {
     return () => { unsubJoin(); unsubHubSync(); unsubLaunch(); unsubReturn(); };
   }, [playerRole, p1Name, p2Name, subscribePayload, broadcastPayload]);
 
+  // Launch functions rely on local echo to update sender's state
   const launchGame = (gameId: 'GAME_1' | 'GAME_2') => {
-    if (playerRole === 'p1') {
-      broadcastPayload('LAUNCH_GAME', { gameId });
-      setAppState(gameId);
-    }
+    broadcastPayload('LAUNCH_GAME', { gameId });
   };
 
   const returnToHub = () => {
     broadcastPayload('RETURN_TO_HUB', {});
-    setAppState('HUB');
   };
 
   // UI Renders
@@ -198,18 +202,18 @@ export default function ArcadeSwitchboard() {
           </header>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <button onClick={() => launchGame('GAME_1')} disabled={playerRole !== 'p1' || p2Name === 'Waiting...'} className="group bg-slate-900 rounded-2xl p-6 border-2 border-slate-800 hover:border-indigo-500 text-left transition-all disabled:opacity-50 disabled:hover:border-slate-800">
+            <button onClick={() => launchGame('GAME_1')} disabled={p2Name === 'Waiting...'} className="group bg-slate-900 rounded-2xl p-6 border-2 border-slate-800 hover:border-indigo-500 text-left transition-all disabled:opacity-50 disabled:hover:border-slate-800">
               <div className="bg-indigo-950 text-indigo-400 w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl mb-4 group-hover:scale-110 transition-transform">1</div>
               <h3 className="text-xl font-black text-white mb-2">Flappy Clash</h3>
               <p className="text-sm text-slate-400">Survival race with floaty physics & ghost rivals.</p>
-              {playerRole !== 'p1' && <p className="text-xs text-rose-400 mt-4 font-bold">Only Host can launch</p>}
             </button>
-            <button onClick={() => launchGame('GAME_2')} disabled={playerRole !== 'p1' || p2Name === 'Waiting...'} className="group bg-slate-900 rounded-2xl p-6 border-2 border-slate-800 hover:border-emerald-500 text-left transition-all disabled:opacity-50 disabled:hover:border-slate-800">
+            
+            <button onClick={() => launchGame('GAME_2')} disabled={p2Name === 'Waiting...'} className="group bg-slate-900 rounded-2xl p-6 border-2 border-slate-800 hover:border-emerald-500 text-left transition-all disabled:opacity-50 disabled:hover:border-slate-800">
               <div className="bg-emerald-950 text-emerald-400 w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl mb-4 group-hover:scale-110 transition-transform">2</div>
               <h3 className="text-xl font-black text-white mb-2">Block Drop Battle</h3>
               <p className="text-sm text-slate-400">Action puzzle. Clear lines to send garbage!</p>
-              {playerRole !== 'p1' && <p className="text-xs text-rose-400 mt-4 font-bold">Only Host can launch</p>}
             </button>
+
             <div className="bg-slate-900/50 rounded-2xl p-6 border border-slate-800 border-dashed flex flex-col items-center justify-center min-h-[200px]">
               <span className="text-slate-600 font-bold uppercase tracking-widest text-sm">Game Slot 3 (Locked)</span>
             </div>
