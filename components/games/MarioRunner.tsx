@@ -61,7 +61,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     p2: { x: CW/2, lastX: CW/2 }, // Top Paddle (Guest)
     p1Score: 0,
     p2Score: 0,
-    msg: '', // Global message
+    msg: '',
     particles: [] as Particle[],
     trail: [] as Trail[],
     shake: 0,
@@ -91,31 +91,31 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
   }, []);
 
   // ------------------------------------------------------------------
-  // NETWORK SYNC LOGIC (True Server-Client Architecture)
+  // NETWORK SYNC LOGIC (True Server-Client Architecture - THROTTLED)
   // ------------------------------------------------------------------
   useEffect(() => {
-    // 1. Host continuously broadcasts entire game truth every 50ms
+    // 1. Throttled Sync Loop (15 FPS = 66ms) - Prevents WebSocket Flooding!
     const syncInterval = setInterval(() => {
+      const st = stateRef.current;
       if (playerRole === 'p1') {
         broadcastPayload('HOST_SYNC', {
-          b: stateRef.current.ball,
-          p1x: stateRef.current.p1.x,
-          s1: stateRef.current.p1Score,
-          s2: stateRef.current.p2Score,
-          st: stateRef.current.status,
-          msg: stateRef.current.msg
+          b: st.ball, p1x: st.p1.x, s1: st.p1Score, s2: st.p2Score, st: st.status, msg: st.msg
         });
+      } else {
+        broadcastPayload('GUEST_SYNC', { p2x: st.p2.x });
       }
-    }, 50);
+    }, 66);
 
     // 2. Guest blindly accepts and applies Host's game truth
     const unsubHostSync = subscribePayload('HOST_SYNC', (data) => {
       if (playerRole === 'p2') {
         const st = stateRef.current;
-        st.ball = data.b;
+        
+        // Deep copy ball to prevent mutation errors during guest interpolation
+        st.ball = { ...data.b }; 
         st.p1.x = data.p1x;
         
-        // Handle Visual Transitions based on Host state changes
+        // Handle Visual State Transitions
         if (data.st === 'SCORE' && st.status === 'PLAYING') {
             spawnExplosion(data.b.x, data.b.y, '#facc15', 30);
             st.shake = 15;
@@ -133,14 +133,14 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         st.status = data.st;
         st.msg = data.msg;
 
-        // Sync React UI
-        setP1Score(data.s1);
-        setP2Score(data.s2);
-        setGameState(data.st);
+        // Safely Sync React UI (Only if changed, prevents infinite render freezing)
+        setGameState(prev => prev !== data.st ? data.st : prev);
+        setP1Score(prev => prev !== data.s1 ? data.s1 : prev);
+        setP2Score(prev => prev !== data.s2 ? data.s2 : prev);
       }
     });
 
-    // 3. Guest sends their paddle X to Host continuously on move
+    // 3. Host receives Guest's paddle X
     const unsubGuestSync = subscribePayload('GUEST_SYNC', (data) => {
       if (playerRole === 'p1') {
         stateRef.current.p2.x = data.p2x;
@@ -172,7 +172,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     };
   }, [playerRole, broadcastPayload, subscribePayload, resetRound, spawnExplosion]);
 
-  // Input Handling (1:1 Touch Tracking)
+  // Input Handling (1:1 Touch Tracking - LOCAL ONLY, NO NETWORK CALLS)
   const handlePointer = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (stateRef.current.status !== 'PLAYING') return;
     const canvas = canvasRef.current;
@@ -185,14 +185,14 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     // CRITICAL: Mirror X-axis for Player 2 so they can play locally exactly like P1
     if (playerRole === 'p2') x = CW - x;
 
-    // Clamp to screen
+    // Clamp to screen boundaries
     x = Math.max(PW/2, Math.min(CW - PW/2, x));
 
+    // Update local state ONLY (Network loop picks this up every 66ms)
     if (playerRole === 'p1') {
       stateRef.current.p1.x = x;
     } else {
       stateRef.current.p2.x = x;
-      broadcastPayload('GUEST_SYNC', { p2x: x }); // Guest sends X to Host
     }
   };
 
@@ -280,7 +280,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         else if (b.y > CH) triggerScore('p2', b.x, CH - 10);
       }
 
-      // Guest Interpolation (Predicts movement between 50ms packets for buttery smooth 60fps)
+      // Guest Interpolation (Predicts movement between 66ms packets for buttery smooth 60fps)
       if (playerRole === 'p2' && st.status === 'PLAYING') {
         b.x += b.vx;
         b.y += b.vy;
@@ -300,7 +300,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       const mapY = (y: number) => playerRole === 'p2' ? CH - y : y;
 
       ctx.save();
-      ctx.fillStyle = '#020617';
+      ctx.fillStyle = '#020617'; // Deep space background
       ctx.fillRect(0, 0, CW, CH);
 
       if (st.shake > 0) {
@@ -441,14 +441,14 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
 
       {/* Overlays */}
       {gameState !== 'PLAYING' && (
-        <div className="absolute inset-0 bg-slate-950/70 flex flex-col items-center justify-center p-6 z-20 backdrop-blur-sm transition-opacity duration-300">
+        <div className="absolute inset-0 bg-slate-950/70 flex flex-col items-center justify-center p-6 z-20 backdrop-blur-sm transition-opacity duration-300 pointer-events-auto">
           
           {gameState === 'WAITING' && (
             <div className="text-cyan-400 font-black text-2xl animate-pulse tracking-widest drop-shadow-[0_0_15px_rgba(6,182,212,0.8)]">SYNCING ARENA...</div>
           )}
 
           {gameState === 'SCORE' && (
-            <div className="text-yellow-400 font-black text-5xl italic tracking-widest drop-shadow-[0_0_20px_rgba(250,204,21,1)] animate-bounce">GOAL!</div>
+            <div className="text-yellow-400 font-black text-5xl italic tracking-widest drop-shadow-[0_0_20px_rgba(250,204,21,1)] animate-bounce pointer-events-none">GOAL!</div>
           )}
 
           {gameState === 'GAMEOVER' && (
