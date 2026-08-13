@@ -223,16 +223,56 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     }
   };
 
-  // Main Render & Physics Engine (60 FPS)
+  // ------------------------------------------------------------------
+  // MAIN RENDER & PHYSICS ENGINE (60 FPS) - LEGENDARY EDITION
+  // ------------------------------------------------------------------
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
     let animationId: number;
 
+    // Internal Scoring Logic (Host Only)
+    const triggerScore = (scoringPlayer: 'p1' | 'p2', x: number, y: number) => {
+      const st = stateRef.current;
+      st.status = 'SCORE';
+      setGameState('SCORE');
+      
+      if (scoringPlayer === 'p1') st.p1Score += 1; else st.p2Score += 1;
+      setP1Score(st.p1Score); setP2Score(st.p2Score);
+      
+      spawnExplosion(x, y, '#facc15', 25);
+      st.shake = 12;
+      playTone(150, 'sawtooth', 0.4, 0.15);
+
+      // Re-center Ball
+      const nextDir: 1 | -1 = scoringPlayer === 'p1' ? -1 : 1;
+      st.ball = { 
+        x: CW/2, y: CH/2, 
+        vx: (Math.random() > 0.5 ? 2.5 : -2.5), 
+        vy: 6 * nextDir, 
+        speed: 6, isSmash: false 
+      };
+      
+      setTimeout(() => {
+        if (st.p1Score >= WIN_SCORE || st.p2Score >= WIN_SCORE) {
+          st.status = 'GAMEOVER';
+          setGameState('GAMEOVER');
+          const winMsg = st.p1Score >= WIN_SCORE ? 'P1 WINS!' : 'P2 WINS!';
+          st.msg = winMsg;
+          setResultMsg((winMsg === 'P1 WINS!' && playerRole === 'p1') || (winMsg === 'P2 WINS!' && playerRole === 'p2') ? 'YOU WIN!' : 'DEFEATED!');
+          playTone(600, 'square', 0.8, 0.2);
+        } else {
+          st.status = 'PLAYING';
+          setGameState('PLAYING');
+        }
+      }, 1600);
+    };
+
     const render = () => {
       animationId = requestAnimationFrame(render);
       
+      // LEGENDARY FIX: try/finally block guarantees ctx.restore() is called even if a draw error occurs
       try {
         const st = stateRef.current;
         const b = st.ball;
@@ -333,11 +373,11 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         ctx.fillStyle = '#020617'; 
         ctx.fillRect(0, 0, CW, CH);
 
-        // v5.0 ANDROID-SAFE Watermark!
+        // v6.0 LEGENDARY Watermark!
         ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
         ctx.font = '900 36px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('v5.0 ANDROID-SAFE', CW/2, CH/2 + 80);
+        ctx.fillText('v6.0 LEGENDARY', CW/2, CH/2 + 80);
 
         if (st.shake > 0) {
           ctx.translate((Math.random()-0.5)*st.shake, (Math.random()-0.5)*st.shake);
@@ -355,7 +395,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         const localColor = '#06b6d4'; 
         const rivalColor = '#ec4899'; 
         
-        // Android-safe Paddle Drawing (Replaced roundRect)
+        // Android-safe Paddle Drawing
         const drawPaddle = (x: number, y: number, color: string) => {
           ctx.shadowColor = color;
           ctx.shadowBlur = 10;
@@ -374,12 +414,12 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           drawPaddle(mapX(st.p1.x), mapY(CH - 40), rivalColor);
         }
 
-        // Trails
+        // Trails (LEGENDARY FIX: Math.max prevents negative radius crash)
         st.trail.forEach((t) => {
           t.age -= 0.06;
           if (t.age > 0) {
             ctx.beginPath();
-            ctx.arc(mapX(t.x), mapY(t.y), BR * t.age, 0, Math.PI*2);
+            ctx.arc(mapX(t.x), mapY(t.y), Math.max(0.1, BR * t.age), 0, Math.PI*2);
             ctx.fillStyle = b.isSmash 
               ? `rgba(239, 68, 68, ${t.age})`
               : `rgba(255, 255, 255, ${t.age * 0.4})`;
@@ -400,57 +440,30 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           ctx.shadowBlur = 0;
         }
 
-        // Particles
+        // Particles (LEGENDARY FIX: if guard + Math.max prevents NaN/negative radius stack overflow)
         st.particles.forEach(p => {
-          p.x += p.vx; p.y += p.vy; p.life -= 0.03;
-          ctx.fillStyle = p.color;
-          ctx.globalAlpha = Math.max(0, p.life);
-          ctx.beginPath(); ctx.arc(mapX(p.x), mapY(p.y), 3 * p.life, 0, Math.PI*2); ctx.fill();
+          p.x += p.vx; 
+          p.y += p.vy; 
+          p.life -= 0.03;
+          
+          if (p.life > 0) {
+            ctx.fillStyle = p.color;
+            ctx.globalAlpha = Math.max(0, p.life);
+            ctx.beginPath(); 
+            ctx.arc(mapX(p.x), mapY(p.y), Math.max(0.1, 3 * p.life), 0, Math.PI*2); 
+            ctx.fill();
+          }
         });
         ctx.globalAlpha = 1.0;
         st.particles = st.particles.filter(p => p.life > 0);
 
-        ctx.restore();
       } catch (e) {
         console.error("Render Loop Error:", e);
+      } finally {
+        // LEGENDARY FIX: Absolutely guarantees the canvas state is restored,
+        // preventing the stack overflow that was freezing Android.
+        ctx.restore();
       }
-    };
-
-    // Internal Scoring Logic (Host Only)
-    const triggerScore = (scoringPlayer: 'p1' | 'p2', x: number, y: number) => {
-      const st = stateRef.current;
-      st.status = 'SCORE';
-      setGameState('SCORE');
-      
-      if (scoringPlayer === 'p1') st.p1Score += 1; else st.p2Score += 1;
-      setP1Score(st.p1Score); setP2Score(st.p2Score);
-      
-      spawnExplosion(x, y, '#facc15', 25);
-      st.shake = 12;
-      playTone(150, 'sawtooth', 0.4, 0.15);
-
-      // Re-center Ball
-      const nextDir: 1 | -1 = scoringPlayer === 'p1' ? -1 : 1;
-      st.ball = { 
-        x: CW/2, y: CH/2, 
-        vx: (Math.random() > 0.5 ? 2.5 : -2.5), 
-        vy: 6 * nextDir, 
-        speed: 6, isSmash: false 
-      };
-      
-      setTimeout(() => {
-        if (st.p1Score >= WIN_SCORE || st.p2Score >= WIN_SCORE) {
-          st.status = 'GAMEOVER';
-          setGameState('GAMEOVER');
-          const winMsg = st.p1Score >= WIN_SCORE ? 'P1 WINS!' : 'P2 WINS!';
-          st.msg = winMsg;
-          setResultMsg((winMsg === 'P1 WINS!' && playerRole === 'p1') || (winMsg === 'P2 WINS!' && playerRole === 'p2') ? 'YOU WIN!' : 'DEFEATED!');
-          playTone(600, 'square', 0.8, 0.2);
-        } else {
-          st.status = 'PLAYING';
-          setGameState('PLAYING');
-        }
-      }, 1600);
     };
 
     animationId = requestAnimationFrame(render);
@@ -484,7 +497,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         className="w-full max-w-[400px] aspect-[2/3] object-cover bg-slate-950 border-x-2 border-slate-800 shadow-2xl cursor-crosshair touch-none" 
       />
 
-      {/* Overlays - ANDROID OPTIMIZED (Removed backdrop-blur and animate-bounce) */}
+      {/* Overlays - Mobile GPU Optimized */}
       {gameState !== 'PLAYING' && (
         <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center p-6 z-20 transition-opacity duration-300 pointer-events-none">
           
