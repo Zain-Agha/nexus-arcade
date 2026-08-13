@@ -53,7 +53,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
   const [p2Score, setP2Score] = useState(0);
   const [resultMsg, setResultMsg] = useState('');
 
-  // 60FPS Mutable Physics State (Bypasses React Render Cycle entirely)
+  // 60FPS Mutable Physics State
   const stateRef = useRef({
     status: 'WAITING',
     ball: { x: CW/2, y: CH/2, vx: 0, vy: 0, speed: 6, isSmash: false },
@@ -80,10 +80,10 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     }
   }, []);
 
-  const resetRound = useCallback((serverDirection: 1 | -1) => {
+  const resetBall = useCallback((serverDirection: 1 | -1) => {
     stateRef.current.ball = { 
       x: CW/2, y: CH/2, 
-      vx: (Math.random() > 0.5 ? 2 : -2), 
+      vx: (Math.random() > 0.5 ? 2.5 : -2.5), 
       vy: 6 * serverDirection, 
       speed: 6, isSmash: false 
     };
@@ -91,12 +91,10 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
   }, []);
 
   // ------------------------------------------------------------------
-  // NETWORK SYNC LOGIC (True Server-Client Architecture - THROTTLED)
+  // NETWORK SYNC LOGIC (v3.0 BULLETPROOF CONTINUOUS SYNC)
   // ------------------------------------------------------------------
   useEffect(() => {
-    let lastP2X = -1;
-
-    // 1. Throttled Sync Loop (120ms = ~8.3 FPS) - Strictly prevents Supabase WebSocket disconnects!
+    // 1. Continuous Network Sync Loop (50ms = 20 FPS)
     const syncInterval = setInterval(() => {
       const st = stateRef.current;
       if (playerRole === 'p1') {
@@ -104,47 +102,46 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           b: st.ball, p1x: st.p1.x, s1: st.p1Score, s2: st.p2Score, st: st.status, msg: st.msg
         });
       } else if (playerRole === 'p2') {
-        // Delta Sync: Only broadcast if the guest actually moved the paddle
-        if (st.p2.x !== lastP2X) {
-          broadcastPayload('GUEST_SYNC', { p2x: st.p2.x });
-          lastP2X = st.p2.x;
-        }
+        // Always send Guest paddle X so Host never loses track of P2
+        broadcastPayload('GUEST_SYNC', { p2x: st.p2.x });
       }
-    }, 120);
+    }, 50);
 
-    // 2. Guest blindly accepts and applies Host's game truth
+    // 2. Guest accepts Host's authoritative state
     const unsubHostSync = subscribePayload('HOST_SYNC', (data) => {
       if (playerRole === 'p2') {
         const st = stateRef.current;
         
-        // Deep copy ball to prevent mutation errors during guest interpolation
+        // Always sync ball & host paddle
         if (data.b && !isNaN(data.b.x) && !isNaN(data.b.y)) {
           st.ball = { ...data.b }; 
         }
-        st.p1.x = data.p1x;
-        
-        // Handle Visual State Transitions
+        if (!isNaN(data.p1x)) {
+          st.p1.x = data.p1x;
+        }
+
+        // Sync score & state
+        st.p1Score = data.s1 ?? st.p1Score;
+        st.p2Score = data.s2 ?? st.p2Score;
+
         if (data.st === 'SCORE' && st.status === 'PLAYING') {
-            spawnExplosion(data.b.x, data.b.y, '#facc15', 30);
+            spawnExplosion(st.ball.x, st.ball.y, '#facc15', 30);
             st.shake = 15;
             playTone(150, 'sawtooth', 0.5, 50);
         }
+
         if (data.st === 'GAMEOVER' && st.status !== 'GAMEOVER') {
             const didIWin = data.msg === 'P2 WINS!';
-            playTone(didIWin ? 600 : 200, 'square', 1.0, 1200);
             setResultMsg(didIWin ? 'YOU WIN!' : 'DEFEATED!');
+            playTone(didIWin ? 600 : 200, 'square', 1.0, 1200);
         }
 
-        // Apply Hard State
-        st.p1Score = data.s1;
-        st.p2Score = data.s2;
         st.status = data.st;
-        st.msg = data.msg;
+        st.msg = data.msg || st.msg;
 
-        // Safely Sync React UI (Only if changed, prevents infinite render freezing)
-        setGameState(prev => prev !== data.st ? data.st : prev);
-        setP1Score(prev => prev !== data.s1 ? data.s1 : prev);
-        setP2Score(prev => prev !== data.s2 ? data.s2 : prev);
+        setGameState(data.st);
+        setP1Score(st.p1Score);
+        setP2Score(st.p2Score);
       }
     });
 
@@ -155,14 +152,14 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       }
     });
 
-    // 4. Rematch (Either player can trigger)
+    // 4. Rematch (Either player triggers)
     const unsubRematch = subscribePayload('REMATCH', () => {
       const st = stateRef.current;
       st.p1Score = 0; st.p2Score = 0;
       setP1Score(0); setP2Score(0);
       st.status = 'PLAYING';
       setGameState('PLAYING');
-      if (playerRole === 'p1') resetRound(1);
+      if (playerRole === 'p1') resetBall(1);
     });
 
     // Host Auto-Start on Mount
@@ -170,7 +167,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       setTimeout(() => {
         stateRef.current.status = 'PLAYING';
         setGameState('PLAYING');
-        resetRound(1);
+        resetBall(1);
       }, 1000);
     }
 
@@ -178,11 +175,10 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       clearInterval(syncInterval); 
       unsubHostSync(); unsubGuestSync(); unsubRematch();
     };
-  }, [playerRole, broadcastPayload, subscribePayload, resetRound, spawnExplosion]);
+  }, [playerRole, broadcastPayload, subscribePayload, resetBall, spawnExplosion]);
 
-  // Input Handling (1:1 Touch Tracking - LOCAL ONLY)
+  // Touch & Mouse Input Handling
   const handlePointer = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (stateRef.current.status !== 'PLAYING') return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     
@@ -190,7 +186,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     const scaleX = CW / rect.width;
     let x = (e.clientX - rect.left) * scaleX;
     
-    // CRITICAL: Mirror X-axis for Player 2 so they can play locally exactly like P1
+    // Mirror X-axis for Player 2
     if (playerRole === 'p2') x = CW - x;
     x = Math.max(PW/2, Math.min(CW - PW/2, x));
 
@@ -208,7 +204,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     if (!canvas || !ctx) return;
     let animationId: number;
 
-    const render = (time: number) => {
+    const render = () => {
       animationId = requestAnimationFrame(render);
       
       try {
@@ -234,7 +230,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
             playTone(400, 'sine', 0.05);
           }
 
-          // P1 (Bottom) Paddle Hit - Continuous Collision Detection (CCD)
+          // P1 (Bottom) Paddle Hit
           const p1Top = CH - 40;
           if (b.vy > 0 && b.y + BR >= p1Top && prevY + BR <= p1Top + PH) {
             if (Math.abs(b.x - st.p1.x) < PW/2 + BR) {
@@ -259,7 +255,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
             }
           }
 
-          // P2 (Top) Paddle Hit - Continuous Collision Detection (CCD)
+          // P2 (Top) Paddle Hit
           const p2Bottom = 40 + PH;
           if (b.vy < 0 && b.y - BR <= p2Bottom && prevY - BR >= 40) {
             if (Math.abs(b.x - st.p2.x) < PW/2 + BR) {
@@ -289,7 +285,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           else if (b.y > CH) triggerScore('p2', b.x, CH - 10);
         }
 
-        // Guest Interpolation (Smooth prediction between network frames)
+        // Guest Interpolation
         if (playerRole === 'p2' && st.status === 'PLAYING') {
           b.x += b.vx;
           b.y += b.vy;
@@ -312,11 +308,11 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         ctx.fillStyle = '#020617'; 
         ctx.fillRect(0, 0, CW, CH);
 
-        // Deployment Watermark Indicator! 
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
-        ctx.font = '900 48px sans-serif';
+        // v3.0 Deployment Watermark Indicator!
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+        ctx.font = '900 44px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('v2.0 UPDATE', CW/2, CH/2 + 80);
+        ctx.fillText('v3.0 UPDATE', CW/2, CH/2 + 80);
 
         if (st.shake > 0) {
           ctx.translate((Math.random()-0.5)*st.shake, (Math.random()-0.5)*st.shake);
@@ -348,7 +344,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           ctx.fill();
         };
 
-        // Render Flips perfectly
+        // Render Flips
         if (playerRole === 'p1') {
           drawPaddle(mapX(st.p1.x), mapY(CH - 40), localColor);
           drawPaddle(mapX(st.p2.x), mapY(40), rivalColor);
@@ -371,8 +367,8 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         });
         st.trail = st.trail.filter(t => t.age > 0);
 
-        // Ball
-        if (st.status === 'PLAYING') {
+        // Ball (Rendered during PLAYING and SCORE states)
+        if (st.status === 'PLAYING' || st.status === 'SCORE') {
           const ballColor = b.isSmash ? '#ef4444' : '#ffffff';
           ctx.shadowColor = ballColor;
           ctx.shadowBlur = b.isSmash ? 20 : 10;
@@ -395,23 +391,31 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
 
         ctx.restore();
       } catch (e) {
-        // Absolute safety catch to prevent requestAnimationFrame from ever dying
         console.error("Render Loop Error:", e);
       }
     };
 
-    // Internal Scoring Logic (Only runs on Host)
-    const triggerScore = (winner: 'p1'|'p2', x: number, y: number) => {
+    // Internal Scoring Logic (Host Only)
+    const triggerScore = (scoringPlayer: 'p1' | 'p2', x: number, y: number) => {
       const st = stateRef.current;
       st.status = 'SCORE';
       setGameState('SCORE');
       
-      if (winner === 'p1') st.p1Score += 1; else st.p2Score += 1;
+      if (scoringPlayer === 'p1') st.p1Score += 1; else st.p2Score += 1;
       setP1Score(st.p1Score); setP2Score(st.p2Score);
       
       spawnExplosion(x, y, '#facc15', 30);
       st.shake = 15;
       playTone(150, 'sawtooth', 0.5, 50);
+
+      // IMMEDIATELY RE-CENTER BALL so it never stays stuck off-screen
+      const nextDir: 1 | -1 = scoringPlayer === 'p1' ? -1 : 1;
+      st.ball = { 
+        x: CW/2, y: CH/2, 
+        vx: (Math.random() > 0.5 ? 2.5 : -2.5), 
+        vy: 6 * nextDir, 
+        speed: 6, isSmash: false 
+      };
       
       setTimeout(() => {
         if (st.p1Score >= WIN_SCORE || st.p2Score >= WIN_SCORE) {
@@ -419,19 +423,18 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           setGameState('GAMEOVER');
           const winMsg = st.p1Score >= WIN_SCORE ? 'P1 WINS!' : 'P2 WINS!';
           st.msg = winMsg;
-          setResultMsg(winMsg === 'P1 WINS!' ? 'YOU WIN!' : 'DEFEATED!');
+          setResultMsg((winMsg === 'P1 WINS!' && playerRole === 'p1') || (winMsg === 'P2 WINS!' && playerRole === 'p2') ? 'YOU WIN!' : 'DEFEATED!');
           playTone(600, 'square', 1.0, 1200);
         } else {
           st.status = 'PLAYING';
           setGameState('PLAYING');
-          resetRound(winner === 'p1' ? -1 : 1);
         }
-      }, 2000);
+      }, 1800);
     };
 
     animationId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animationId);
-  }, [playerRole, broadcastPayload, spawnExplosion, resetRound]);
+  }, [playerRole, spawnExplosion]);
 
   return (
     <div className="w-full h-full bg-black flex flex-col items-center justify-center relative touch-none select-none overflow-hidden">
@@ -439,22 +442,23 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       {/* Dynamic HUD */}
       <div className="absolute top-8 w-full max-w-[400px] flex justify-between px-6 z-10 pointer-events-none drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)]">
         <div className={`flex flex-col items-start ${playerRole === 'p1' ? 'text-pink-400' : 'text-cyan-400'}`}>
-          <span className="text-xs font-bold uppercase tracking-widest text-slate-300">RIVAL</span>
+          <span className="text-xs font-bold uppercase tracking-widest text-slate-300">{playerRole === 'p1' ? p2Name : p1Name}</span>
           <span className="text-4xl font-black">{playerRole === 'p1' ? p2Score : p1Score}</span>
         </div>
         <div className={`flex flex-col items-end ${playerRole === 'p1' ? 'text-cyan-400' : 'text-pink-400'}`}>
-          <span className="text-xs font-bold uppercase tracking-widest text-slate-300">YOU</span>
+          <span className="text-xs font-bold uppercase tracking-widest text-slate-300">{playerRole === 'p1' ? p1Name : p2Name}</span>
           <span className="text-4xl font-black">{playerRole === 'p1' ? p1Score : p2Score}</span>
         </div>
       </div>
 
-      {/* Main Gameplay Canvas - 1:1 Touch Surface */}
+      {/* Main Gameplay Canvas */}
       <canvas 
         ref={canvasRef} 
         width={CW} 
         height={CH} 
         onPointerDown={handlePointer}
         onPointerMove={handlePointer}
+        onPointerUp={handlePointer}
         className="w-full max-w-[400px] aspect-[2/3] object-cover bg-slate-950 border-x-2 border-slate-800 shadow-2xl cursor-crosshair touch-none" 
       />
 
