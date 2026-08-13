@@ -94,17 +94,23 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
   // NETWORK SYNC LOGIC (True Server-Client Architecture - THROTTLED)
   // ------------------------------------------------------------------
   useEffect(() => {
-    // 1. Throttled Sync Loop (15 FPS = 66ms) - Prevents WebSocket Flooding!
+    let lastP2X = -1;
+
+    // 1. Throttled Sync Loop (120ms = ~8.3 FPS) - Strictly prevents Supabase WebSocket disconnects!
     const syncInterval = setInterval(() => {
       const st = stateRef.current;
       if (playerRole === 'p1') {
         broadcastPayload('HOST_SYNC', {
           b: st.ball, p1x: st.p1.x, s1: st.p1Score, s2: st.p2Score, st: st.status, msg: st.msg
         });
-      } else {
-        broadcastPayload('GUEST_SYNC', { p2x: st.p2.x });
+      } else if (playerRole === 'p2') {
+        // Delta Sync: Only broadcast if the guest actually moved the paddle
+        if (st.p2.x !== lastP2X) {
+          broadcastPayload('GUEST_SYNC', { p2x: st.p2.x });
+          lastP2X = st.p2.x;
+        }
       }
-    }, 66);
+    }, 120);
 
     // 2. Guest blindly accepts and applies Host's game truth
     const unsubHostSync = subscribePayload('HOST_SYNC', (data) => {
@@ -112,7 +118,9 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         const st = stateRef.current;
         
         // Deep copy ball to prevent mutation errors during guest interpolation
-        st.ball = { ...data.b }; 
+        if (data.b && !isNaN(data.b.x) && !isNaN(data.b.y)) {
+          st.ball = { ...data.b }; 
+        }
         st.p1.x = data.p1x;
         
         // Handle Visual State Transitions
@@ -142,7 +150,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
 
     // 3. Host receives Guest's paddle X
     const unsubGuestSync = subscribePayload('GUEST_SYNC', (data) => {
-      if (playerRole === 'p1') {
+      if (playerRole === 'p1' && !isNaN(data.p2x)) {
         stateRef.current.p2.x = data.p2x;
       }
     });
@@ -172,7 +180,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     };
   }, [playerRole, broadcastPayload, subscribePayload, resetRound, spawnExplosion]);
 
-  // Input Handling (1:1 Touch Tracking - LOCAL ONLY, NO NETWORK CALLS)
+  // Input Handling (1:1 Touch Tracking - LOCAL ONLY)
   const handlePointer = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (stateRef.current.status !== 'PLAYING') return;
     const canvas = canvasRef.current;
@@ -184,11 +192,8 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     
     // CRITICAL: Mirror X-axis for Player 2 so they can play locally exactly like P1
     if (playerRole === 'p2') x = CW - x;
-
-    // Clamp to screen boundaries
     x = Math.max(PW/2, Math.min(CW - PW/2, x));
 
-    // Update local state ONLY (Network loop picks this up every 66ms)
     if (playerRole === 'p1') {
       stateRef.current.p1.x = x;
     } else {
@@ -205,180 +210,194 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
 
     const render = (time: number) => {
       animationId = requestAnimationFrame(render);
-      const st = stateRef.current;
-      const b = st.ball;
-
-      // Calculate Paddle Velocities for Smash Mechanics
-      const p1Vel = st.p1.x - st.p1.lastX; st.p1.lastX = st.p1.x;
-      const p2Vel = st.p2.x - st.p2.lastX; st.p2.lastX = st.p2.x;
-
-      // ---------------------------------------------------------
-      // PHYSICS (Host Only - Absolute Authority)
-      // ---------------------------------------------------------
-      if (playerRole === 'p1' && st.status === 'PLAYING') {
-        b.x += b.vx;
-        b.y += b.vy;
-
-        // Wall Bounces
-        if (b.x <= BR || b.x >= CW - BR) {
-          b.vx *= -1;
-          b.x = b.x <= BR ? BR : CW - BR;
-          playTone(400, 'sine', 0.05);
-        }
-
-        // P1 (Bottom) Paddle Hit
-        if (b.vy > 0 && b.y + BR >= CH - 40 && b.y - BR <= CH - 40 + PH) {
-          if (Math.abs(b.x - st.p1.x) < PW/2 + BR) {
-            b.vy *= -1;
-            b.y = CH - 40 - BR;
-            
-            // Smash Mechanic
-            if (Math.abs(p1Vel) > 3) {
-              b.vx += (p1Vel * 0.15); // Add English/Curve
-              b.speed = Math.min(14, b.speed + 1.5); // Speed Boost
-              b.isSmash = true;
-              playTone(800, 'square', 0.1);
-              st.shake = 5;
-            } else {
-              b.speed = Math.min(12, b.speed + 0.2); // Normal speedup
-              b.isSmash = false;
-              playTone(600, 'sine', 0.1);
-            }
-            
-            const mag = Math.sqrt(b.vx*b.vx + b.vy*b.vy);
-            b.vx = (b.vx / mag) * b.speed;
-            b.vy = (b.vy / mag) * b.speed;
-          }
-        }
-
-        // P2 (Top) Paddle Hit
-        if (b.vy < 0 && b.y - BR <= 40 + PH && b.y + BR >= 40) {
-          if (Math.abs(b.x - st.p2.x) < PW/2 + BR) {
-            b.vy *= -1;
-            b.y = 40 + PH + BR;
-            
-            if (Math.abs(p2Vel) > 3) {
-              b.vx += (p2Vel * 0.15);
-              b.speed = Math.min(14, b.speed + 1.5);
-              b.isSmash = true;
-              playTone(800, 'square', 0.1);
-              st.shake = 5;
-            } else {
-              b.speed = Math.min(12, b.speed + 0.2);
-              b.isSmash = false;
-              playTone(600, 'sine', 0.1);
-            }
-            
-            const mag = Math.sqrt(b.vx*b.vx + b.vy*b.vy);
-            b.vx = (b.vx / mag) * b.speed;
-            b.vy = (b.vy / mag) * b.speed;
-          }
-        }
-
-        // Scoring Trigger
-        if (b.y < 0) triggerScore('p1', b.x, 10);
-        else if (b.y > CH) triggerScore('p2', b.x, CH - 10);
-      }
-
-      // Guest Interpolation (Predicts movement between 66ms packets for buttery smooth 60fps)
-      if (playerRole === 'p2' && st.status === 'PLAYING') {
-        b.x += b.vx;
-        b.y += b.vy;
-        if (b.x <= BR || b.x >= CW - BR) b.vx *= -1; // Local wall bounce predictive
-      }
-
-      // Record Trail for both
-      if (st.status === 'PLAYING') {
-        st.trail.unshift({ x: b.x, y: b.y, age: 1.0 });
-        if (st.trail.length > 20) st.trail.pop();
-      }
-
-      // ---------------------------------------------------------
-      // RENDER (Mirrored flawlessly so everyone plays Bottom-Up!)
-      // ---------------------------------------------------------
-      const mapX = (x: number) => playerRole === 'p2' ? CW - x : x;
-      const mapY = (y: number) => playerRole === 'p2' ? CH - y : y;
-
-      ctx.save();
-      ctx.fillStyle = '#020617'; // Deep space background
-      ctx.fillRect(0, 0, CW, CH);
-
-      if (st.shake > 0) {
-        ctx.translate((Math.random()-0.5)*st.shake, (Math.random()-0.5)*st.shake);
-        st.shake *= 0.8;
-        if (st.shake < 0.5) st.shake = 0;
-      }
-
-      // Midline Center Grid
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-      ctx.lineWidth = 4;
-      ctx.setLineDash([15, 15]);
-      ctx.beginPath(); ctx.moveTo(0, CH/2); ctx.lineTo(CW, CH/2); ctx.stroke();
-      ctx.setLineDash([]);
-
-      const localColor = '#06b6d4'; // Cyan
-      const rivalColor = '#ec4899'; // Pink
       
-      const drawPaddle = (x: number, y: number, color: string) => {
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 15;
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.roundRect(x - PW/2, y, PW, PH, 6);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.roundRect(x - PW/2 + 4, y + 2, PW - 8, PH - 4, 3);
-        ctx.fill();
-      };
+      try {
+        const st = stateRef.current;
+        const b = st.ball;
 
-      // Draw Paddles correctly flipped based on role
-      if (playerRole === 'p1') {
-        drawPaddle(mapX(st.p1.x), mapY(CH - 40), localColor);
-        drawPaddle(mapX(st.p2.x), mapY(40), rivalColor);
-      } else {
-        drawPaddle(mapX(st.p2.x), mapY(40), localColor);
-        drawPaddle(mapX(st.p1.x), mapY(CH - 40), rivalColor);
-      }
+        // Paddle Velocities
+        const p1Vel = st.p1.x - st.p1.lastX; st.p1.lastX = st.p1.x;
+        const p2Vel = st.p2.x - st.p2.lastX; st.p2.lastX = st.p2.x;
 
-      // Draw Ball Trail
-      st.trail.forEach((t) => {
-        t.age -= 0.05;
-        if (t.age > 0) {
-          ctx.beginPath();
-          ctx.arc(mapX(t.x), mapY(t.y), BR * t.age, 0, Math.PI*2);
-          ctx.fillStyle = b.isSmash 
-            ? `rgba(239, 68, 68, ${t.age})`
-            : `rgba(255, 255, 255, ${t.age * 0.5})`;
-          ctx.fill();
+        // ---------------------------------------------------------
+        // PHYSICS (Host Only - Absolute Authority)
+        // ---------------------------------------------------------
+        if (playerRole === 'p1' && st.status === 'PLAYING') {
+          const prevY = b.y;
+          b.x += b.vx;
+          b.y += b.vy;
+
+          // Wall Bounces
+          if (b.x <= BR || b.x >= CW - BR) {
+            b.vx *= -1;
+            b.x = b.x <= BR ? BR : CW - BR;
+            playTone(400, 'sine', 0.05);
+          }
+
+          // P1 (Bottom) Paddle Hit - Continuous Collision Detection (CCD)
+          const p1Top = CH - 40;
+          if (b.vy > 0 && b.y + BR >= p1Top && prevY + BR <= p1Top + PH) {
+            if (Math.abs(b.x - st.p1.x) < PW/2 + BR) {
+              b.vy *= -1;
+              b.y = p1Top - BR;
+              
+              if (Math.abs(p1Vel) > 3) {
+                b.vx += (p1Vel * 0.15);
+                b.speed = Math.min(15, b.speed + 1.5);
+                b.isSmash = true;
+                playTone(800, 'square', 0.1);
+                st.shake = 5;
+              } else {
+                b.speed = Math.min(12, b.speed + 0.3);
+                b.isSmash = false;
+                playTone(600, 'sine', 0.1);
+              }
+              
+              const mag = Math.sqrt(b.vx*b.vx + b.vy*b.vy) || 1;
+              b.vx = (b.vx / mag) * b.speed;
+              b.vy = (b.vy / mag) * b.speed;
+            }
+          }
+
+          // P2 (Top) Paddle Hit - Continuous Collision Detection (CCD)
+          const p2Bottom = 40 + PH;
+          if (b.vy < 0 && b.y - BR <= p2Bottom && prevY - BR >= 40) {
+            if (Math.abs(b.x - st.p2.x) < PW/2 + BR) {
+              b.vy *= -1;
+              b.y = p2Bottom + BR;
+              
+              if (Math.abs(p2Vel) > 3) {
+                b.vx += (p2Vel * 0.15);
+                b.speed = Math.min(15, b.speed + 1.5);
+                b.isSmash = true;
+                playTone(800, 'square', 0.1);
+                st.shake = 5;
+              } else {
+                b.speed = Math.min(12, b.speed + 0.3);
+                b.isSmash = false;
+                playTone(600, 'sine', 0.1);
+              }
+              
+              const mag = Math.sqrt(b.vx*b.vx + b.vy*b.vy) || 1;
+              b.vx = (b.vx / mag) * b.speed;
+              b.vy = (b.vy / mag) * b.speed;
+            }
+          }
+
+          // Scoring Trigger
+          if (b.y < 0) triggerScore('p1', b.x, 10);
+          else if (b.y > CH) triggerScore('p2', b.x, CH - 10);
         }
-      });
-      st.trail = st.trail.filter(t => t.age > 0);
 
-      // Draw Ball
-      if (st.status === 'PLAYING') {
-        const ballColor = b.isSmash ? '#ef4444' : '#ffffff';
-        ctx.shadowColor = ballColor;
-        ctx.shadowBlur = b.isSmash ? 20 : 10;
-        ctx.fillStyle = ballColor;
-        ctx.beginPath();
-        ctx.arc(mapX(b.x), mapY(b.y), BR, 0, Math.PI*2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
+        // Guest Interpolation (Smooth prediction between network frames)
+        if (playerRole === 'p2' && st.status === 'PLAYING') {
+          b.x += b.vx;
+          b.y += b.vy;
+          if (b.x <= BR || b.x >= CW - BR) b.vx *= -1;
+        }
+
+        // Record Trail
+        if (st.status === 'PLAYING') {
+          st.trail.unshift({ x: b.x, y: b.y, age: 1.0 });
+          if (st.trail.length > 20) st.trail.pop();
+        }
+
+        // ---------------------------------------------------------
+        // RENDER 
+        // ---------------------------------------------------------
+        const mapX = (x: number) => playerRole === 'p2' ? CW - x : x;
+        const mapY = (y: number) => playerRole === 'p2' ? CH - y : y;
+
+        ctx.save();
+        ctx.fillStyle = '#020617'; 
+        ctx.fillRect(0, 0, CW, CH);
+
+        // Deployment Watermark Indicator! 
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+        ctx.font = '900 48px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('v2.0 UPDATE', CW/2, CH/2 + 80);
+
+        if (st.shake > 0) {
+          ctx.translate((Math.random()-0.5)*st.shake, (Math.random()-0.5)*st.shake);
+          st.shake *= 0.8;
+          if (st.shake < 0.5) st.shake = 0;
+        }
+
+        // Midline
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.lineWidth = 4;
+        ctx.setLineDash([15, 15]);
+        ctx.beginPath(); ctx.moveTo(0, CH/2); ctx.lineTo(CW, CH/2); ctx.stroke();
+        ctx.setLineDash([]);
+
+        const localColor = '#06b6d4'; 
+        const rivalColor = '#ec4899'; 
+        
+        const drawPaddle = (x: number, y: number, color: string) => {
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 15;
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.roundRect(x - PW/2, y, PW, PH, 6);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.roundRect(x - PW/2 + 4, y + 2, PW - 8, PH - 4, 3);
+          ctx.fill();
+        };
+
+        // Render Flips perfectly
+        if (playerRole === 'p1') {
+          drawPaddle(mapX(st.p1.x), mapY(CH - 40), localColor);
+          drawPaddle(mapX(st.p2.x), mapY(40), rivalColor);
+        } else {
+          drawPaddle(mapX(st.p2.x), mapY(40), localColor);
+          drawPaddle(mapX(st.p1.x), mapY(CH - 40), rivalColor);
+        }
+
+        // Trails
+        st.trail.forEach((t) => {
+          t.age -= 0.05;
+          if (t.age > 0) {
+            ctx.beginPath();
+            ctx.arc(mapX(t.x), mapY(t.y), BR * t.age, 0, Math.PI*2);
+            ctx.fillStyle = b.isSmash 
+              ? `rgba(239, 68, 68, ${t.age})`
+              : `rgba(255, 255, 255, ${t.age * 0.5})`;
+            ctx.fill();
+          }
+        });
+        st.trail = st.trail.filter(t => t.age > 0);
+
+        // Ball
+        if (st.status === 'PLAYING') {
+          const ballColor = b.isSmash ? '#ef4444' : '#ffffff';
+          ctx.shadowColor = ballColor;
+          ctx.shadowBlur = b.isSmash ? 20 : 10;
+          ctx.fillStyle = ballColor;
+          ctx.beginPath();
+          ctx.arc(mapX(b.x), mapY(b.y), BR, 0, Math.PI*2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+
+        // Particles
+        st.particles.forEach(p => {
+          p.x += p.vx; p.y += p.vy; p.life -= 0.02;
+          ctx.fillStyle = p.color;
+          ctx.globalAlpha = Math.max(0, p.life);
+          ctx.beginPath(); ctx.arc(mapX(p.x), mapY(p.y), 3 * p.life, 0, Math.PI*2); ctx.fill();
+        });
+        ctx.globalAlpha = 1.0;
+        st.particles = st.particles.filter(p => p.life > 0);
+
+        ctx.restore();
+      } catch (e) {
+        // Absolute safety catch to prevent requestAnimationFrame from ever dying
+        console.error("Render Loop Error:", e);
       }
-
-      // Particles
-      st.particles.forEach(p => {
-        p.x += p.vx; p.y += p.vy; p.life -= 0.02;
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = Math.max(0, p.life);
-        ctx.beginPath(); ctx.arc(mapX(p.x), mapY(p.y), 3 * p.life, 0, Math.PI*2); ctx.fill();
-      });
-      ctx.globalAlpha = 1.0;
-      st.particles = st.particles.filter(p => p.life > 0);
-
-      ctx.restore();
     };
 
     // Internal Scoring Logic (Only runs on Host)
@@ -441,14 +460,14 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
 
       {/* Overlays */}
       {gameState !== 'PLAYING' && (
-        <div className="absolute inset-0 bg-slate-950/70 flex flex-col items-center justify-center p-6 z-20 backdrop-blur-sm transition-opacity duration-300 pointer-events-auto">
+        <div className="absolute inset-0 bg-slate-950/70 flex flex-col items-center justify-center p-6 z-20 backdrop-blur-sm transition-opacity duration-300 pointer-events-none">
           
           {gameState === 'WAITING' && (
             <div className="text-cyan-400 font-black text-2xl animate-pulse tracking-widest drop-shadow-[0_0_15px_rgba(6,182,212,0.8)]">SYNCING ARENA...</div>
           )}
 
           {gameState === 'SCORE' && (
-            <div className="text-yellow-400 font-black text-5xl italic tracking-widest drop-shadow-[0_0_20px_rgba(250,204,21,1)] animate-bounce pointer-events-none">GOAL!</div>
+            <div className="text-yellow-400 font-black text-5xl italic tracking-widest drop-shadow-[0_0_20px_rgba(250,204,21,1)] animate-bounce">GOAL!</div>
           )}
 
           {gameState === 'GAMEOVER' && (
