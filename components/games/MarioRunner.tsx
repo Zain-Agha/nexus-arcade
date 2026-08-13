@@ -12,26 +12,6 @@ interface GameProps {
 }
 
 // ------------------------------------------------------------------
-// AUDIO SYNTHESIS
-// ------------------------------------------------------------------
-const playTone = (freq: number, type: OscillatorType, duration: number, vol = 0.1, slideFreq?: number) => {
-  try {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, ctx.currentTime);
-    if (slideFreq) osc.frequency.exponentialRampToValueAtTime(slideFreq, ctx.currentTime + duration);
-    gain.gain.setValueAtTime(vol, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + duration);
-  } catch(e) {}
-};
-
-// ------------------------------------------------------------------
 // GAME CONSTANTS
 // ------------------------------------------------------------------
 const CW = 400; // Canvas Width
@@ -46,12 +26,50 @@ interface Trail { x: number; y: number; age: number; }
 
 export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPayload, subscribePayload }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
   
   // UI State
   const [gameState, setGameState] = useState<'WAITING' | 'PLAYING' | 'SCORE' | 'GAMEOVER'>('WAITING');
   const [p1Score, setP1Score] = useState(0);
   const [p2Score, setP2Score] = useState(0);
   const [resultMsg, setResultMsg] = useState('');
+
+  // ------------------------------------------------------------------
+  // ANDROID-SAFE SINGLETON AUDIO CONTEXT
+  // ------------------------------------------------------------------
+  const getAudioContext = useCallback(() => {
+    if (typeof window === 'undefined') return null;
+    if (!audioCtxRef.current) {
+      try {
+        const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+        if (Ctx) audioCtxRef.current = new Ctx();
+      } catch (e) {}
+    }
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume().catch(() => {});
+    }
+    return audioCtxRef.current;
+  }, []);
+
+  const playTone = useCallback((freq: number, type: OscillatorType, duration: number, vol = 0.1, slideFreq?: number) => {
+    try {
+      const ctx = getAudioContext();
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+      if (slideFreq && slideFreq > 0) {
+        osc.frequency.exponentialRampToValueAtTime(Math.max(1, slideFreq), ctx.currentTime + duration);
+      }
+      gain.gain.setValueAtTime(vol, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + duration);
+    } catch(e) {}
+  }, [getAudioContext]);
 
   // 60FPS Mutable Physics State
   const stateRef = useRef({
@@ -91,10 +109,9 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
   }, []);
 
   // ------------------------------------------------------------------
-  // NETWORK SYNC LOGIC (v3.0 BULLETPROOF CONTINUOUS SYNC)
+  // NETWORK SYNC LOGIC (Android-Safe Continuous Sync)
   // ------------------------------------------------------------------
   useEffect(() => {
-    // 1. Continuous Network Sync Loop (50ms = 20 FPS)
     const syncInterval = setInterval(() => {
       const st = stateRef.current;
       if (playerRole === 'p1') {
@@ -102,17 +119,14 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           b: st.ball, p1x: st.p1.x, s1: st.p1Score, s2: st.p2Score, st: st.status, msg: st.msg
         });
       } else if (playerRole === 'p2') {
-        // Always send Guest paddle X so Host never loses track of P2
         broadcastPayload('GUEST_SYNC', { p2x: st.p2.x });
       }
     }, 50);
 
-    // 2. Guest accepts Host's authoritative state
     const unsubHostSync = subscribePayload('HOST_SYNC', (data) => {
       if (playerRole === 'p2') {
         const st = stateRef.current;
         
-        // Always sync ball & host paddle
         if (data.b && !isNaN(data.b.x) && !isNaN(data.b.y)) {
           st.ball = { ...data.b }; 
         }
@@ -120,20 +134,19 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           st.p1.x = data.p1x;
         }
 
-        // Sync score & state
         st.p1Score = data.s1 ?? st.p1Score;
         st.p2Score = data.s2 ?? st.p2Score;
 
         if (data.st === 'SCORE' && st.status === 'PLAYING') {
-            spawnExplosion(st.ball.x, st.ball.y, '#facc15', 30);
-            st.shake = 15;
-            playTone(150, 'sawtooth', 0.5, 50);
+            spawnExplosion(st.ball.x, st.ball.y, '#facc15', 25);
+            st.shake = 12;
+            playTone(150, 'sawtooth', 0.4, 0.2);
         }
 
         if (data.st === 'GAMEOVER' && st.status !== 'GAMEOVER') {
             const didIWin = data.msg === 'P2 WINS!';
             setResultMsg(didIWin ? 'YOU WIN!' : 'DEFEATED!');
-            playTone(didIWin ? 600 : 200, 'square', 1.0, 1200);
+            playTone(didIWin ? 600 : 200, 'square', 0.8, 0.2);
         }
 
         st.status = data.st;
@@ -145,14 +158,12 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       }
     });
 
-    // 3. Host receives Guest's paddle X
     const unsubGuestSync = subscribePayload('GUEST_SYNC', (data) => {
       if (playerRole === 'p1' && !isNaN(data.p2x)) {
         stateRef.current.p2.x = data.p2x;
       }
     });
 
-    // 4. Rematch (Either player triggers)
     const unsubRematch = subscribePayload('REMATCH', () => {
       const st = stateRef.current;
       st.p1Score = 0; st.p2Score = 0;
@@ -162,23 +173,26 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       if (playerRole === 'p1') resetBall(1);
     });
 
-    // Host Auto-Start on Mount
     if (playerRole === 'p1') {
       setTimeout(() => {
         stateRef.current.status = 'PLAYING';
         setGameState('PLAYING');
         resetBall(1);
-      }, 1000);
+      }, 800);
     }
 
     return () => { 
       clearInterval(syncInterval); 
       unsubHostSync(); unsubGuestSync(); unsubRematch();
+      if (audioCtxRef.current) {
+        try { audioCtxRef.current.close(); } catch(e) {}
+      }
     };
-  }, [playerRole, broadcastPayload, subscribePayload, resetBall, spawnExplosion]);
+  }, [playerRole, broadcastPayload, subscribePayload, resetBall, spawnExplosion, playTone]);
 
-  // Touch & Mouse Input Handling
+  // Touch & Pointer Input
   const handlePointer = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    getAudioContext(); // Resumes audio context on first touch on Android
     const canvas = canvasRef.current;
     if (!canvas) return;
     
@@ -186,7 +200,6 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     const scaleX = CW / rect.width;
     let x = (e.clientX - rect.left) * scaleX;
     
-    // Mirror X-axis for Player 2
     if (playerRole === 'p2') x = CW - x;
     x = Math.max(PW/2, Math.min(CW - PW/2, x));
 
@@ -211,12 +224,11 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         const st = stateRef.current;
         const b = st.ball;
 
-        // Paddle Velocities
         const p1Vel = st.p1.x - st.p1.lastX; st.p1.lastX = st.p1.x;
         const p2Vel = st.p2.x - st.p2.lastX; st.p2.lastX = st.p2.x;
 
         // ---------------------------------------------------------
-        // PHYSICS (Host Only - Absolute Authority)
+        // PHYSICS (Host Only)
         // ---------------------------------------------------------
         if (playerRole === 'p1' && st.status === 'PLAYING') {
           const prevY = b.y;
@@ -230,7 +242,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
             playTone(400, 'sine', 0.05);
           }
 
-          // P1 (Bottom) Paddle Hit
+          // P1 Paddle Hit
           const p1Top = CH - 40;
           if (b.vy > 0 && b.y + BR >= p1Top && prevY + BR <= p1Top + PH) {
             if (Math.abs(b.x - st.p1.x) < PW/2 + BR) {
@@ -239,14 +251,14 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
               
               if (Math.abs(p1Vel) > 3) {
                 b.vx += (p1Vel * 0.15);
-                b.speed = Math.min(15, b.speed + 1.5);
+                b.speed = Math.min(14, b.speed + 1.2);
                 b.isSmash = true;
-                playTone(800, 'square', 0.1);
-                st.shake = 5;
+                playTone(800, 'square', 0.08);
+                st.shake = 4;
               } else {
                 b.speed = Math.min(12, b.speed + 0.3);
                 b.isSmash = false;
-                playTone(600, 'sine', 0.1);
+                playTone(600, 'sine', 0.08);
               }
               
               const mag = Math.sqrt(b.vx*b.vx + b.vy*b.vy) || 1;
@@ -255,7 +267,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
             }
           }
 
-          // P2 (Top) Paddle Hit
+          // P2 Paddle Hit
           const p2Bottom = 40 + PH;
           if (b.vy < 0 && b.y - BR <= p2Bottom && prevY - BR >= 40) {
             if (Math.abs(b.x - st.p2.x) < PW/2 + BR) {
@@ -264,14 +276,14 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
               
               if (Math.abs(p2Vel) > 3) {
                 b.vx += (p2Vel * 0.15);
-                b.speed = Math.min(15, b.speed + 1.5);
+                b.speed = Math.min(14, b.speed + 1.2);
                 b.isSmash = true;
-                playTone(800, 'square', 0.1);
-                st.shake = 5;
+                playTone(800, 'square', 0.08);
+                st.shake = 4;
               } else {
                 b.speed = Math.min(12, b.speed + 0.3);
                 b.isSmash = false;
-                playTone(600, 'sine', 0.1);
+                playTone(600, 'sine', 0.08);
               }
               
               const mag = Math.sqrt(b.vx*b.vx + b.vy*b.vy) || 1;
@@ -295,11 +307,11 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         // Record Trail
         if (st.status === 'PLAYING') {
           st.trail.unshift({ x: b.x, y: b.y, age: 1.0 });
-          if (st.trail.length > 20) st.trail.pop();
+          if (st.trail.length > 15) st.trail.pop();
         }
 
         // ---------------------------------------------------------
-        // RENDER 
+        // RENDER (Android-Safe Canvas)
         // ---------------------------------------------------------
         const mapX = (x: number) => playerRole === 'p2' ? CW - x : x;
         const mapY = (y: number) => playerRole === 'p2' ? CH - y : y;
@@ -308,11 +320,11 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         ctx.fillStyle = '#020617'; 
         ctx.fillRect(0, 0, CW, CH);
 
-        // v3.0 Deployment Watermark Indicator!
+        // v4.0 ANDROID-SAFE Watermark!
         ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-        ctx.font = '900 44px sans-serif';
+        ctx.font = '900 36px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('v3.0 UPDATE', CW/2, CH/2 + 80);
+        ctx.fillText('v4.0 ANDROID-SAFE', CW/2, CH/2 + 80);
 
         if (st.shake > 0) {
           ctx.translate((Math.random()-0.5)*st.shake, (Math.random()-0.5)*st.shake);
@@ -330,21 +342,17 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         const localColor = '#06b6d4'; 
         const rivalColor = '#ec4899'; 
         
+        // Android-safe Paddle Drawing (Replaced roundRect)
         const drawPaddle = (x: number, y: number, color: string) => {
           ctx.shadowColor = color;
-          ctx.shadowBlur = 15;
+          ctx.shadowBlur = 10;
           ctx.fillStyle = color;
-          ctx.beginPath();
-          ctx.roundRect(x - PW/2, y, PW, PH, 6);
-          ctx.fill();
+          ctx.fillRect(x - PW/2, y, PW, PH);
           ctx.shadowBlur = 0;
           ctx.fillStyle = '#ffffff';
-          ctx.beginPath();
-          ctx.roundRect(x - PW/2 + 4, y + 2, PW - 8, PH - 4, 3);
-          ctx.fill();
+          ctx.fillRect(x - PW/2 + 4, y + 2, PW - 8, PH - 4);
         };
 
-        // Render Flips
         if (playerRole === 'p1') {
           drawPaddle(mapX(st.p1.x), mapY(CH - 40), localColor);
           drawPaddle(mapX(st.p2.x), mapY(40), rivalColor);
@@ -355,23 +363,23 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
 
         // Trails
         st.trail.forEach((t) => {
-          t.age -= 0.05;
+          t.age -= 0.06;
           if (t.age > 0) {
             ctx.beginPath();
             ctx.arc(mapX(t.x), mapY(t.y), BR * t.age, 0, Math.PI*2);
             ctx.fillStyle = b.isSmash 
               ? `rgba(239, 68, 68, ${t.age})`
-              : `rgba(255, 255, 255, ${t.age * 0.5})`;
+              : `rgba(255, 255, 255, ${t.age * 0.4})`;
             ctx.fill();
           }
         });
         st.trail = st.trail.filter(t => t.age > 0);
 
-        // Ball (Rendered during PLAYING and SCORE states)
+        // Ball
         if (st.status === 'PLAYING' || st.status === 'SCORE') {
           const ballColor = b.isSmash ? '#ef4444' : '#ffffff';
           ctx.shadowColor = ballColor;
-          ctx.shadowBlur = b.isSmash ? 20 : 10;
+          ctx.shadowBlur = b.isSmash ? 15 : 8;
           ctx.fillStyle = ballColor;
           ctx.beginPath();
           ctx.arc(mapX(b.x), mapY(b.y), BR, 0, Math.PI*2);
@@ -381,7 +389,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
 
         // Particles
         st.particles.forEach(p => {
-          p.x += p.vx; p.y += p.vy; p.life -= 0.02;
+          p.x += p.vx; p.y += p.vy; p.life -= 0.03;
           ctx.fillStyle = p.color;
           ctx.globalAlpha = Math.max(0, p.life);
           ctx.beginPath(); ctx.arc(mapX(p.x), mapY(p.y), 3 * p.life, 0, Math.PI*2); ctx.fill();
@@ -404,11 +412,11 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       if (scoringPlayer === 'p1') st.p1Score += 1; else st.p2Score += 1;
       setP1Score(st.p1Score); setP2Score(st.p2Score);
       
-      spawnExplosion(x, y, '#facc15', 30);
-      st.shake = 15;
-      playTone(150, 'sawtooth', 0.5, 50);
+      spawnExplosion(x, y, '#facc15', 25);
+      st.shake = 12;
+      playTone(150, 'sawtooth', 0.4, 0.15);
 
-      // IMMEDIATELY RE-CENTER BALL so it never stays stuck off-screen
+      // Re-center Ball
       const nextDir: 1 | -1 = scoringPlayer === 'p1' ? -1 : 1;
       st.ball = { 
         x: CW/2, y: CH/2, 
@@ -424,17 +432,17 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           const winMsg = st.p1Score >= WIN_SCORE ? 'P1 WINS!' : 'P2 WINS!';
           st.msg = winMsg;
           setResultMsg((winMsg === 'P1 WINS!' && playerRole === 'p1') || (winMsg === 'P2 WINS!' && playerRole === 'p2') ? 'YOU WIN!' : 'DEFEATED!');
-          playTone(600, 'square', 1.0, 1200);
+          playTone(600, 'square', 0.8, 0.2);
         } else {
           st.status = 'PLAYING';
           setGameState('PLAYING');
         }
-      }, 1800);
+      }, 1600);
     };
 
     animationId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animationId);
-  }, [playerRole, spawnExplosion]);
+  }, [playerRole, spawnExplosion, playTone]);
 
   return (
     <div className="w-full h-full bg-black flex flex-col items-center justify-center relative touch-none select-none overflow-hidden">
@@ -459,6 +467,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         onPointerDown={handlePointer}
         onPointerMove={handlePointer}
         onPointerUp={handlePointer}
+        onPointerCancel={handlePointer}
         className="w-full max-w-[400px] aspect-[2/3] object-cover bg-slate-950 border-x-2 border-slate-800 shadow-2xl cursor-crosshair touch-none" 
       />
 
