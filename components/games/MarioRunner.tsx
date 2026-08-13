@@ -373,12 +373,6 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         ctx.fillStyle = '#020617'; 
         ctx.fillRect(0, 0, CW, CH);
 
-        // v6.0 LEGENDARY Watermark!
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-        ctx.font = '900 36px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('v6.0 LEGENDARY', CW/2, CH/2 + 80);
-
         if (st.shake > 0) {
           ctx.translate((Math.random()-0.5)*st.shake, (Math.random()-0.5)*st.shake);
           st.shake *= 0.8;
