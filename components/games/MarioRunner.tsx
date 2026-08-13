@@ -68,6 +68,12 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       gain.connect(ctx.destination);
       osc.start();
       osc.stop(ctx.currentTime + duration);
+      
+      // ANDROID-SAFE: Disconnect nodes to prevent memory leaks
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
     } catch(e) {}
   }, [getAudioContext]);
 
@@ -134,8 +140,15 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           st.p1.x = data.p1x;
         }
 
-        st.p1Score = data.s1 ?? st.p1Score;
-        st.p2Score = data.s2 ?? st.p2Score;
+        // ANDROID-SAFE: Only update React state if values actually changed!
+        if (data.s1 !== undefined && data.s1 !== st.p1Score) {
+          st.p1Score = data.s1;
+          setP1Score(data.s1);
+        }
+        if (data.s2 !== undefined && data.s2 !== st.p2Score) {
+          st.p2Score = data.s2;
+          setP2Score(data.s2);
+        }
 
         if (data.st === 'SCORE' && st.status === 'PLAYING') {
             spawnExplosion(st.ball.x, st.ball.y, '#facc15', 25);
@@ -149,12 +162,12 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
             playTone(didIWin ? 600 : 200, 'square', 0.8, 0.2);
         }
 
-        st.status = data.st;
-        st.msg = data.msg || st.msg;
+        if (data.st !== st.status) {
+          st.status = data.st;
+          setGameState(data.st);
+        }
 
-        setGameState(data.st);
-        setP1Score(st.p1Score);
-        setP2Score(st.p2Score);
+        st.msg = data.msg || st.msg;
       }
     });
 
@@ -320,11 +333,11 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         ctx.fillStyle = '#020617'; 
         ctx.fillRect(0, 0, CW, CH);
 
-        // v4.0 ANDROID-SAFE Watermark!
+        // v5.0 ANDROID-SAFE Watermark!
         ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
         ctx.font = '900 36px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('v4.0 ANDROID-SAFE', CW/2, CH/2 + 80);
+        ctx.fillText('v5.0 ANDROID-SAFE', CW/2, CH/2 + 80);
 
         if (st.shake > 0) {
           ctx.translate((Math.random()-0.5)*st.shake, (Math.random()-0.5)*st.shake);
@@ -471,21 +484,21 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         className="w-full max-w-[400px] aspect-[2/3] object-cover bg-slate-950 border-x-2 border-slate-800 shadow-2xl cursor-crosshair touch-none" 
       />
 
-      {/* Overlays */}
+      {/* Overlays - ANDROID OPTIMIZED (Removed backdrop-blur and animate-bounce) */}
       {gameState !== 'PLAYING' && (
-        <div className="absolute inset-0 bg-slate-950/70 flex flex-col items-center justify-center p-6 z-20 backdrop-blur-sm transition-opacity duration-300 pointer-events-none">
+        <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center p-6 z-20 transition-opacity duration-300 pointer-events-none">
           
           {gameState === 'WAITING' && (
-            <div className="text-cyan-400 font-black text-2xl animate-pulse tracking-widest drop-shadow-[0_0_15px_rgba(6,182,212,0.8)]">SYNCING ARENA...</div>
+            <div className="text-cyan-400 font-black text-2xl animate-pulse tracking-widest">SYNCING ARENA...</div>
           )}
 
           {gameState === 'SCORE' && (
-            <div className="text-yellow-400 font-black text-5xl italic tracking-widest drop-shadow-[0_0_20px_rgba(250,204,21,1)] animate-bounce">GOAL!</div>
+            <div className="text-yellow-400 font-black text-5xl italic tracking-widest">GOAL!</div>
           )}
 
           {gameState === 'GAMEOVER' && (
             <div className="bg-slate-900 border-2 border-slate-700 p-8 rounded-3xl w-full max-w-[340px] text-center shadow-2xl animate-in zoom-in-95 pointer-events-auto">
-              <h2 className={`text-5xl font-black mb-8 uppercase tracking-widest drop-shadow-lg ${resultMsg === 'YOU WIN!' ? 'text-cyan-400' : 'text-rose-500'}`}>
+              <h2 className={`text-5xl font-black mb-8 uppercase tracking-widest ${resultMsg === 'YOU WIN!' ? 'text-cyan-400' : 'text-rose-500'}`}>
                 {resultMsg}
               </h2>
               <button 
