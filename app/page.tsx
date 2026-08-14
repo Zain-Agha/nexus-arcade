@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createClient, RealtimeChannel } from '@supabase/supabase-js';
 import FlappyClash from '@/components/games/FlappyClash';
 import MarioRunner from '@/components/games/MarioRunner';
+import TowerStack from '@/components/games/TowerStack';
 
 // Supabase Initialization (Fallback to BroadcastChannel for local testing)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -15,7 +16,8 @@ export default function ArcadeSwitchboard() {
   const [playerName, setPlayerName] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [joinCode, setJoinCode] = useState('');
-  const [appState, setAppState] = useState<'LOGIN' | 'HUB' | 'GAME_1' | 'GAME_2'>('LOGIN');
+  // Added GAME_3 to the app state
+  const [appState, setAppState] = useState<'LOGIN' | 'HUB' | 'GAME_1' | 'GAME_2' | 'GAME_3'>('LOGIN');
   const [playerRole, setPlayerRole] = useState<'p1' | 'p2' | null>(null);
   
   const [p1Name, setP1Name] = useState('Player 1');
@@ -35,7 +37,7 @@ export default function ArcadeSwitchboard() {
       bcRef.current.postMessage({ event, payload });
     }
 
-    // 2. ECHO LOCALLY (Crucial Fix: Ensures the sender also processes their own broadcasts
+    // 2. ECHO LOCALLY (Ensures the sender also processes their own broadcasts
     //    so the Host or Rematcher doesn't get stuck waiting for their own event)
     if (listenersRef.current[event]) {
       listenersRef.current[event].forEach((cb) => cb(payload));
@@ -134,7 +136,7 @@ export default function ArcadeSwitchboard() {
   }, [playerRole, p1Name, p2Name, subscribePayload, broadcastPayload]);
 
   // Launch functions rely on local echo to update sender's state
-  const launchGame = (gameId: 'GAME_1' | 'GAME_2') => {
+  const launchGame = (gameId: 'GAME_1' | 'GAME_2' | 'GAME_3') => {
     broadcastPayload('LAUNCH_GAME', { gameId });
   };
 
@@ -187,7 +189,7 @@ export default function ArcadeSwitchboard() {
     return (
       <div className="min-h-screen bg-slate-950 p-4 sm:p-8 font-sans text-slate-100">
         <div className="max-w-4xl mx-auto">
-          <header className="bg-slate-900 rounded-2xl p-6 mb-8 border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <header className="bg-slate-900 rounded-2xl p-6 mb-8 border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-2xl">
             <div>
               <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">Session Code</p>
               <h2 className="text-4xl font-black text-white tracking-widest">{roomCode}</h2>
@@ -201,22 +203,29 @@ export default function ArcadeSwitchboard() {
             </div>
           </header>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <button onClick={() => launchGame('GAME_1')} disabled={p2Name === 'Waiting...'} className="group bg-slate-900 rounded-2xl p-6 border-2 border-slate-800 hover:border-indigo-500 text-left transition-all disabled:opacity-50 disabled:hover:border-slate-800">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* GAME 1 */}
+            <button onClick={() => launchGame('GAME_1')} disabled={p2Name === 'Waiting...'} className="group bg-slate-900 rounded-2xl p-6 border-2 border-slate-800 hover:border-indigo-500 text-left transition-all disabled:opacity-50 disabled:hover:border-slate-800 shadow-xl">
               <div className="bg-indigo-950 text-indigo-400 w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl mb-4 group-hover:scale-110 transition-transform">1</div>
               <h3 className="text-xl font-black text-white mb-2">Flappy Clash</h3>
               <p className="text-sm text-slate-400">Survival race with floaty physics & ghost rivals.</p>
             </button>
             
-            <button onClick={() => launchGame('GAME_2')} disabled={p2Name === 'Waiting...'} className="group bg-slate-900 rounded-2xl p-6 border-2 border-slate-800 hover:border-emerald-500 text-left transition-all disabled:opacity-50 disabled:hover:border-slate-800">
+            {/* GAME 2 */}
+            <button onClick={() => launchGame('GAME_2')} disabled={p2Name === 'Waiting...'} className="group bg-slate-900 rounded-2xl p-6 border-2 border-slate-800 hover:border-emerald-500 text-left transition-all disabled:opacity-50 disabled:hover:border-slate-800 shadow-xl">
               <div className="bg-emerald-950 text-emerald-400 w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl mb-4 group-hover:scale-110 transition-transform">2</div>
-              <h3 className="text-xl font-black text-white mb-2">Block Drop Battle</h3>
-              <p className="text-sm text-slate-400">Action puzzle. Clear lines to send garbage!</p>
+              <h3 className="text-xl font-black text-white mb-2">Neon Paddle</h3>
+              <p className="text-sm text-slate-400">High-speed head-to-head smash combat.</p>
             </button>
 
-            <div className="bg-slate-900/50 rounded-2xl p-6 border border-slate-800 border-dashed flex flex-col items-center justify-center min-h-[200px]">
-              <span className="text-slate-600 font-bold uppercase tracking-widest text-sm">Game Slot 3 (Locked)</span>
-            </div>
+            {/* GAME 3 */}
+            <button onClick={() => launchGame('GAME_3')} disabled={p2Name === 'Waiting...'} className="group bg-slate-900 rounded-2xl p-6 border-2 border-slate-800 hover:border-amber-500 text-left transition-all disabled:opacity-50 disabled:hover:border-slate-800 shadow-xl">
+              <div className="bg-amber-950 text-amber-400 w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl mb-4 group-hover:scale-110 transition-transform">3</div>
+              <h3 className="text-xl font-black text-white mb-2">Tower Stack</h3>
+              <p className="text-sm text-slate-400">Physics-based competitive city building.</p>
+            </button>
+
+            {/* LOCKED SLOT */}
             <div className="bg-slate-900/50 rounded-2xl p-6 border border-slate-800 border-dashed flex flex-col items-center justify-center min-h-[200px]">
               <span className="text-slate-600 font-bold uppercase tracking-widest text-sm">Game Slot 4 (Locked)</span>
             </div>
@@ -244,6 +253,12 @@ export default function ArcadeSwitchboard() {
         )}
         {appState === 'GAME_2' && (
           <MarioRunner 
+            roomCode={roomCode} playerRole={playerRole!} p1Name={p1Name} p2Name={p2Name} 
+            broadcastPayload={broadcastPayload} subscribePayload={subscribePayload} 
+          />
+        )}
+        {appState === 'GAME_3' && (
+          <TowerStack 
             roomCode={roomCode} playerRole={playerRole!} p1Name={p1Name} p2Name={p2Name} 
             broadcastPayload={broadcastPayload} subscribePayload={subscribePayload} 
           />
