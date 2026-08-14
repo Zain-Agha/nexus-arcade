@@ -237,10 +237,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
 
   // Fetch Leaderboard from Supabase
   const fetchGlobalLeaderboard = useCallback(async () => {
-    if (!hasSupabase || !supabase) {
-      console.log("[NEXUS DB] Skipping fetch: Supabase env vars missing");
-      return;
-    }
+    if (!hasSupabase || !supabase) return;
     const { data, error } = await (supabase.from('flappy_highscores') as any)
       .select('*')
       .order('score', { ascending: false })
@@ -256,27 +253,6 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
   useEffect(() => {
     fetchGlobalLeaderboard();
   }, [fetchGlobalLeaderboard]);
-
-  // DIAGNOSTIC BUTTON: Manual Test Insert
-  const handleTestInsert = async () => {
-    if (!hasSupabase || !supabase) {
-      alert("❌ ERROR: NEXT_PUBLIC_SUPABASE_URL or ANON_KEY is missing from your .env.local file!");
-      return;
-    }
-
-    const { data, error } = await (supabase.from('flappy_highscores') as any)
-      .insert([{ name: 'Test Player', score: 99 }])
-      .select();
-
-    if (error) {
-      alert(`❌ SUPABASE REJECTED INSERT:\n${error.message}\n\nDetails: ${error.details || 'Check RLS SQL'}`);
-      console.error("[DIAGNOSTIC TEST ERROR]:", error);
-    } else {
-      alert("✅ SUCCESS! 'Test Player: 99' inserted into Supabase!\nRefreshing leaderboard now...");
-      console.log("[DIAGNOSTIC TEST SUCCESS]:", data);
-      fetchGlobalLeaderboard();
-    }
-  };
 
   // Dynamically watch scores for the top HUD
   useEffect(() => {
@@ -363,28 +339,21 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
 
     // SUBMIT TO SUPABASE IMMEDIATELY WHEN YOUR BIRD CRASHES
     if (!state.hasSubmittedScore && hasSupabase && supabase) {
-      if (state.local.score <= 0) {
-        console.log("[NEXUS DB] Skipped save: Score is 0 (Must score at least 1 point)");
-      } else {
+      if (state.local.score > 0) {
         state.hasSubmittedScore = true;
         const localName = playerRole === 'p1' ? p1Name : p2Name;
-        
-        console.log(`[NEXUS DB] Submitting score: ${state.local.score} for ${localName}...`);
 
         (supabase.from('flappy_highscores') as any)
           .insert([{ name: localName, score: state.local.score }])
           .select()
-          .then(({ data, error }: any) => {
+          .then(({ error }: any) => {
             if (error) {
-              console.error("[NEXUS DB ERROR]:", error.message, error.details);
+              console.error("[LEADERBOARD SAVE ERROR]:", error.message);
             } else {
-              console.log("[NEXUS DB SUCCESS] Score saved to Supabase!", data);
               fetchGlobalLeaderboard(); 
             }
           });
       }
-    } else if (!hasSupabase) {
-      console.warn("[NEXUS DB] Cannot save: Supabase client is not connected.");
     }
 
     checkGameOver();
@@ -453,7 +422,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
     broadcastPayload('REMATCH_FLAPPY', { seed: Math.floor(Math.random() * 100000) });
   };
 
-  // Main Render & Physics Loop (CORE REMAINS UNTOUCHED)
+  // Main Render & Physics Loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -576,7 +545,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
       {/* 👑 TOP HUD WITH STATS & HIGH SCORE */}
       <div className="absolute top-0 w-full p-4 flex justify-between z-10 font-black pointer-events-none shadow-[inset_0_70px_70px_rgba(0,0,0,0.6)]">
         
-        {/* Player 1 HUD (Reduced Font Size) */}
+        {/* Player 1 HUD */}
         <div className="flex flex-col items-start z-10">
           <div className={`text-lg sm:text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${playerRole === 'p1' ? 'text-red-400' : 'text-blue-400'}`}>
             {p1Name}: {p1Score}
@@ -598,7 +567,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
           </div>
         )}
 
-        {/* Player 2 HUD (Reduced Font Size) */}
+        {/* Player 2 HUD */}
         <div className="flex flex-col items-end z-10">
           <div className={`text-lg sm:text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${playerRole === 'p2' ? 'text-blue-400' : 'text-red-400'}`}>
             {p2Score} :{p2Name}
@@ -615,11 +584,11 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
       {isLeaderboardOpen && (
         <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-6 z-50 pointer-events-auto backdrop-blur-md">
           <div className="bg-slate-900 border border-indigo-500/30 p-6 rounded-3xl w-full max-w-sm shadow-[0_0_50px_rgba(79,70,229,0.2)]">
-            <h2 className="text-3xl font-black text-white text-center uppercase tracking-widest mb-4">
+            <h2 className="text-3xl font-black text-white text-center uppercase tracking-widest mb-6">
               Global <span className="text-indigo-400">Top 10</span>
             </h2>
             
-            <div className="flex flex-col gap-2 mb-4 max-h-[260px] overflow-y-auto">
+            <div className="flex flex-col gap-2 mb-6 max-h-[300px] overflow-y-auto">
               {globalLeaderboard.length === 0 ? (
                 <div className="text-slate-500 text-center font-bold italic py-4">No scores yet. Be the first!</div>
               ) : (
@@ -643,11 +612,6 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
                 })
               )}
             </div>
-
-            {/* DIAGNOSTIC TEST BUTTON */}
-            <button onClick={handleTestInsert} className="w-full mb-3 bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 rounded-xl text-xs transition-all shadow-md">
-              🧪 Test DB Connection (Send Score 99)
-            </button>
 
             <button onClick={() => setIsLeaderboardOpen(false)} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-xl transition-all">
               Close Leaderboard
