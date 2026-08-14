@@ -478,7 +478,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
         
         {/* Player 1 HUD */}
         <div className="flex flex-col items-start z-10">
-          <div className={`text-3xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${playerRole === 'p1' ? 'text-red-400' : 'text-blue-400'}`}>
+          <div className={`text-lg sm:text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${playerRole === 'p1' ? 'text-red-400' : 'text-blue-400'}`}>
             {p1Name}: {p1Score}
           </div>
           <div className="text-[10px] text-yellow-400 tracking-widest uppercase drop-shadow-md bg-black/40 px-2 py-1 rounded-md mt-1 border border-yellow-400/30">
@@ -500,7 +500,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
 
         {/* Player 2 HUD */}
         <div className="flex flex-col items-end z-10">
-          <div className={`text-3xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${playerRole === 'p2' ? 'text-blue-400' : 'text-red-400'}`}>
+          <div className={`text-lg sm:text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${playerRole === 'p2' ? 'text-blue-400' : 'text-red-400'}`}>
             {p2Score} :{p2Name}
           </div>
           <div className="text-[10px] text-yellow-400 tracking-widest uppercase drop-shadow-md bg-black/40 px-2 py-1 rounded-md mt-1 border border-yellow-400/30">
