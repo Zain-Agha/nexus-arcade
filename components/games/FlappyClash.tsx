@@ -41,17 +41,15 @@ const playTone = (freq: number, type: OscillatorType, duration: number, vol = 0.
 };
 
 // ------------------------------------------------------------------
-// GRAPHICS ENGINE (CANVAS 2D)
+// GRAPHICS ENGINE (CANVAS 2D) - UNTOUCHED!
 // ------------------------------------------------------------------
 const drawBackground = (ctx: CanvasRenderingContext2D, width: number, height: number, cameraX: number) => {
-  // Sky Gradient
   const skyGrad = ctx.createLinearGradient(0, 0, 0, height);
   skyGrad.addColorStop(0, '#4cb8c4');
   skyGrad.addColorStop(1, '#3cd3ad');
   ctx.fillStyle = skyGrad;
   ctx.fillRect(0, 0, width, height);
 
-  // Parallax Clouds (Slow)
   ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
   const cloudOffset = (cameraX * 0.1) % (width * 2);
   for(let i = 0; i < 5; i++) {
@@ -64,7 +62,6 @@ const drawBackground = (ctx: CanvasRenderingContext2D, width: number, height: nu
      ctx.fill();
   }
 
-  // Parallax Trees/City (Medium)
   const treeOffset = (cameraX * 0.3) % 200;
   ctx.fillStyle = '#2c8f79';
   for(let i = -1; i < width / 100 + 2; i++) {
@@ -79,19 +76,14 @@ const drawBackground = (ctx: CanvasRenderingContext2D, width: number, height: nu
 
 const drawGround = (ctx: CanvasRenderingContext2D, width: number, height: number, cameraX: number) => {
   const groundY = height - 30;
-  
-  // Dirt Base
   ctx.fillStyle = '#ded895';
   ctx.fillRect(0, groundY, width, 30);
-  
-  // Grass Top
   ctx.fillStyle = '#73bf2e';
   ctx.fillRect(0, groundY, width, 8);
   ctx.strokeStyle = '#558f22';
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(0, groundY); ctx.lineTo(width, groundY); ctx.stroke();
 
-  // Scrolling Speed Stripes
   const scrollOffset = (cameraX * 1) % 40;
   ctx.fillStyle = '#c9c381';
   for(let i = -1; i < (width / 40) + 2; i++) {
@@ -110,7 +102,7 @@ const drawPipe = (ctx: CanvasRenderingContext2D, x: number, topHeight: number, b
   const shadowColor = '#4a851b';
   const highlight = '#9de659';
   const capH = 24;
-  const over = 4; // cap overhang
+  const over = 4;
 
   const drawCylinder = (cx: number, cy: number, cw: number, ch: number) => {
     const grad = ctx.createLinearGradient(cx, 0, cx + cw, 0);
@@ -126,10 +118,8 @@ const drawPipe = (ctx: CanvasRenderingContext2D, x: number, topHeight: number, b
     ctx.strokeRect(cx, cy, cw, ch);
   };
 
-  // Top Pipe
   drawCylinder(x, 0, width, topHeight - capH);
   drawCylinder(x - over, topHeight - capH, width + over*2, capH);
-  // Bottom Pipe
   drawCylinder(x, bottomY + capH, width, height - bottomY - capH);
   drawCylinder(x - over, bottomY, width + over*2, capH);
 };
@@ -137,8 +127,6 @@ const drawPipe = (ctx: CanvasRenderingContext2D, x: number, topHeight: number, b
 const drawBird = (ctx: CanvasRenderingContext2D, x: number, y: number, color: string, vel: number, isGhost: boolean, isAlive: boolean, time: number) => {
   ctx.save();
   ctx.translate(x + 15, y + 15);
-  
-  // Physics Rotation (Alive = pitch with velocity. Dead = Nose Dive)
   const rotation = isAlive ? Math.min(Math.PI / 4, Math.max(-Math.PI / 6, vel * 0.12)) : Math.PI / 2.5;
   ctx.rotate(rotation);
 
@@ -146,43 +134,34 @@ const drawBird = (ctx: CanvasRenderingContext2D, x: number, y: number, color: st
   ctx.lineWidth = 2;
   ctx.strokeStyle = '#000';
 
-  // Flap Animation
   const flap = isAlive ? Math.sin(time / 80) * 6 : 0;
 
-  // Legs
   ctx.strokeStyle = '#f97316';
   ctx.beginPath(); ctx.moveTo(-4, 10); ctx.lineTo(-4, 16); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(4, 12); ctx.lineTo(4, 18); ctx.stroke();
   ctx.strokeStyle = '#000';
 
-  // Body
   ctx.fillStyle = color;
   ctx.beginPath(); ctx.ellipse(0, 0, 16, 12, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
 
-  // Belly Highlight
   ctx.fillStyle = 'rgba(255,255,255,0.3)';
   ctx.beginPath(); ctx.ellipse(4, 4, 8, 5, -0.2, 0, Math.PI*2); ctx.fill();
 
-  // Eye
   ctx.fillStyle = '#fff';
   ctx.beginPath(); ctx.arc(8, -4, 6, 0, Math.PI*2); ctx.fill(); ctx.stroke();
   
   if (isAlive) {
-    // Normal Pupil
     ctx.fillStyle = '#000';
     ctx.beginPath(); ctx.arc(10, -4, 2.5, 0, Math.PI*2); ctx.fill();
   } else {
-    // Dead 'X' Eye
     ctx.strokeStyle = '#000';
     ctx.beginPath(); ctx.moveTo(6, -6); ctx.lineTo(10, -2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(10, -6); ctx.lineTo(6, -2); ctx.stroke();
   }
 
-  // Beak
   ctx.fillStyle = '#f97316';
   ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(24, 2); ctx.lineTo(12, 6); ctx.fill(); ctx.stroke();
 
-  // Wing
   ctx.fillStyle = '#fff';
   ctx.beginPath(); ctx.ellipse(-4, 2 + (vel < 0 && isAlive ? flap : 0), 8, 5, 0.2, 0, Math.PI*2); ctx.fill(); ctx.stroke();
 
@@ -192,13 +171,12 @@ const drawBird = (ctx: CanvasRenderingContext2D, x: number, y: number, color: st
 const drawTombstone = (ctx: CanvasRenderingContext2D, x: number, y: number, isGhost: boolean) => {
   ctx.save();
   if (isGhost) ctx.globalAlpha = 0.5;
-  ctx.translate(x, y - 30); // 30 is tombstone height
+  ctx.translate(x, y - 30);
   
   ctx.fillStyle = '#94a3b8';
   ctx.strokeStyle = '#475569';
   ctx.lineWidth = 2;
 
-  // Arch
   ctx.beginPath();
   ctx.moveTo(3, 30);
   ctx.lineTo(3, 12);
@@ -207,13 +185,12 @@ const drawTombstone = (ctx: CanvasRenderingContext2D, x: number, y: number, isGh
   ctx.closePath();
   ctx.fill(); ctx.stroke();
 
-  // RIP Text
   ctx.fillStyle = '#334155';
   ctx.font = 'bold 9px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('RIP', 15, 16);
-  ctx.fillRect(13, 20, 4, 8); // Cross vertical
-  ctx.fillRect(10, 22, 10, 3); // Cross horizontal
+  ctx.fillRect(13, 20, 4, 8); 
+  ctx.fillRect(10, 22, 10, 3); 
 
   ctx.restore();
 };
@@ -229,6 +206,31 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
   const [showGameOverUI, setShowGameOverUI] = useState(false);
   const [p1Score, setP1Score] = useState(0);
   const [p2Score, setP2Score] = useState(0);
+
+  // --- NEW FEATURES: MATCH WINS & HIGH SCORE ---
+  const [matchWins, setMatchWins] = useState({ p1: 0, p2: 0 });
+  const [highScore, setHighScore] = useState({ score: 0, names: [] as string[] });
+
+  // Dynamically watch scores and update high score immediately!
+  useEffect(() => {
+    const currentHighest = Math.max(p1Score, p2Score);
+    if (currentHighest > highScore.score) {
+      setHighScore(prev => {
+        if (currentHighest <= prev.score) return prev; // Race condition safety
+        const names = [];
+        if (p1Score === currentHighest) names.push(p1Name);
+        if (p2Score === currentHighest) names.push(p2Name);
+        return { score: currentHighest, names };
+      });
+    } else if (currentHighest === highScore.score && currentHighest > 0) {
+      setHighScore(prev => {
+        const newNames = new Set(prev.names);
+        if (p1Score === currentHighest) newNames.add(p1Name);
+        if (p2Score === currentHighest) newNames.add(p2Name);
+        return { score: prev.score, names: Array.from(newNames) };
+      });
+    }
+  }, [p1Score, p2Score, p1Name, p2Name]); // Intentionally excluding highScore to avoid infinite loops
   
   // Physics Constants
   const GRAVITY = 0.35;
@@ -240,7 +242,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
   
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Core Mutable State (Avoids closures in RequestAnimationFrame)
+  // Core Mutable State
   const stateRef = useRef({
     seed: 0,
     status: 'WAITING',
@@ -255,7 +257,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
     const prng = mulberry32(seed + index);
     const rand = prng();
     const minY = 80;
-    const maxY = 746 - 80 - 30 - PIPE_GAP; // 746 height, 30 ground
+    const maxY = 746 - 80 - 30 - PIPE_GAP;
     const topHeight = minY + (rand * (maxY - minY));
     return { index, x: 400 + (index * PIPE_SPACING), topHeight, bottomY: topHeight + PIPE_GAP };
   }, []);
@@ -265,12 +267,22 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
     if (!state.local.alive && !state.rival.alive && state.status !== 'GAMEOVER') {
         state.status = 'GAMEOVER';
         setGameState('GAMEOVER');
-        // Cinematic Delay before showing buttons
+
+        // --- NEW FEATURE: CALCULATE EXACT MATCH WINNER ONCE PER ROUND ---
+        const finalP1 = playerRole === 'p1' ? state.local.score : state.rival.score;
+        const finalP2 = playerRole === 'p2' ? state.local.score : state.rival.score;
+        
+        if (finalP1 > finalP2) {
+          setMatchWins(prev => ({ ...prev, p1: prev.p1 + 1 }));
+        } else if (finalP2 > finalP1) {
+          setMatchWins(prev => ({ ...prev, p2: prev.p2 + 1 }));
+        }
+
         timeoutRef.current = setTimeout(() => {
             setShowGameOverUI(true);
         }, 1200); 
     }
-  }, []);
+  }, [playerRole]);
 
   const triggerDeathSync = useCallback(() => {
     const state = stateRef.current;
@@ -341,7 +353,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
     broadcastPayload('REMATCH_FLAPPY', { seed: Math.floor(Math.random() * 100000) });
   };
 
-  // Main Render & Physics Loop
+  // Main Render & Physics Loop (CORE REMAINS UNTOUCHED)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -356,18 +368,15 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
       const groundY = canvas.height - 30;
       
       if (state.status === 'PLAYING' || state.status === 'GAMEOVER') {
-        // 1. Move Forward (Only if alive)
         if (state.local.alive) {
           state.local.x += SPEED;
         }
 
-        // 2. Gravity & Vertical Movement
         if (state.local.y < groundY) {
             state.local.vel += GRAVITY;
             state.local.y += state.local.vel;
         }
 
-        // 3. Floor Collision
         if (state.local.y >= groundY) {
           state.local.y = groundY;
           if (state.local.alive) {
@@ -377,13 +386,11 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
           }
         }
 
-        // 4. Ceiling Collision
         if (state.local.y < 0) {
           state.local.y = 0;
           state.local.vel = 0;
         }
 
-        // 5. Pipe Collision & Scoring
         if (state.local.alive) {
           const startingIndex = Math.max(0, Math.floor((state.local.x - 400) / PIPE_SPACING));
           for (let i = startingIndex; i < startingIndex + 4; i++) {
@@ -391,7 +398,6 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
             const localBirdScreenX = 100;
             const pipeScreenX = pipe.x - state.local.x + localBirdScreenX;
             
-            // Score
             if (pipeScreenX < localBirdScreenX && pipeScreenX + SPEED >= localBirdScreenX) {
                state.local.score++;
                if (state.local.score > state.lastLocalScore) {
@@ -402,7 +408,6 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
                playTone(800, 'sine', 0.1, 0.02);
             }
 
-            // Hitbox (12px inset forgiving)
             const inset = 12;
             const hitX = localBirdScreenX + 30 > pipeScreenX + inset && localBirdScreenX < pipeScreenX + PIPE_WIDTH - inset;
             if (hitX) {
@@ -410,7 +415,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
               const hitBottom = state.local.y + 30 > pipe.bottomY + inset;
               if (hitTop || hitBottom) {
                 state.local.alive = false;
-                state.local.vel = 0; // stop upward momentum, begin dead drop
+                state.local.vel = 0;
                 playTone(100, 'square', 0.3, 0.1);
                 triggerDeathSync();
               }
@@ -418,7 +423,6 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
           }
         }
 
-        // Throttle Network Sync (15 fps = ~66ms) - Only send if playing to reduce traffic
         if (state.status === 'PLAYING' && time - state.lastSyncTime > 66) {
           state.lastSyncTime = time;
           broadcastPayload('SYNC_FLAPPY', { 
@@ -427,13 +431,10 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
         }
       }
 
-      // --- RENDER PHASE ---
-      // Camera smoothly follows the furthest living player, or locks if both dead
       const cameraGlobalX = Math.max(state.local.x, state.rival.x);
       
       drawBackground(ctx, canvas.width, canvas.height, cameraGlobalX);
       
-      // Draw Pipes
       const drawStartIndex = Math.max(0, Math.floor((cameraGlobalX - 400) / PIPE_SPACING) - 1);
       for (let i = drawStartIndex; i < drawStartIndex + 5; i++) {
         const pipe = generatePipe(i, state.seed);
@@ -443,13 +444,11 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
 
       drawGround(ctx, canvas.width, canvas.height, cameraGlobalX);
 
-      // Colors
-      const p1Color = '#ef4444'; // Red
-      const p2Color = '#3b82f6'; // Blue
+      const p1Color = '#ef4444'; 
+      const p2Color = '#3b82f6'; 
       const localColor = playerRole === 'p1' ? p1Color : p2Color;
       const rivalColor = playerRole === 'p1' ? p2Color : p1Color;
 
-      // Draw Rival (Ghost)
       const rivalScreenX = state.rival.x - cameraGlobalX + 100;
       if (state.rival.y >= groundY) {
         drawTombstone(ctx, rivalScreenX, groundY, true);
@@ -459,7 +458,6 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
         drawBird(ctx, rivalScreenX, state.rival.y, rivalColor, rivalVel, true, state.rival.alive, time);
       }
 
-      // Draw Local Bird
       const localScreenX = state.local.x - cameraGlobalX + 100;
       if (state.local.y >= groundY) {
         drawTombstone(ctx, localScreenX, groundY, false);
@@ -474,13 +472,40 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
 
   return (
     <div className="w-full max-w-[420px] aspect-[9/16] relative bg-black shadow-2xl overflow-hidden touch-none" onTouchStart={handleFlap} onMouseDown={handleFlap}>
-      {/* Top HUD */}
-      <div className="absolute top-0 w-full p-4 flex justify-between z-10 font-black pointer-events-none text-2xl shadow-[inset_0_50px_50px_rgba(0,0,0,0.4)]">
-        <div className={`drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${playerRole === 'p1' ? 'text-red-400' : 'text-blue-400'}`}>
-          {p1Name}: {p1Score}
+      
+      {/* 👑 NEW TOP HUD WITH STATS & HIGH SCORE */}
+      <div className="absolute top-0 w-full p-4 flex justify-between z-10 font-black pointer-events-none shadow-[inset_0_70px_70px_rgba(0,0,0,0.6)]">
+        
+        {/* Player 1 HUD */}
+        <div className="flex flex-col items-start z-10">
+          <div className={`text-3xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${playerRole === 'p1' ? 'text-red-400' : 'text-blue-400'}`}>
+            {p1Name}: {p1Score}
+          </div>
+          <div className="text-[10px] text-yellow-400 tracking-widest uppercase drop-shadow-md bg-black/40 px-2 py-1 rounded-md mt-1 border border-yellow-400/30">
+            WINS: {matchWins.p1}
+          </div>
         </div>
-        <div className={`drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${playerRole === 'p2' ? 'text-blue-400' : 'text-red-400'}`}>
-          {p2Name}: {p2Score}
+
+        {/* High Score Center Crown */}
+        {highScore.score > 0 && (
+          <div className="absolute w-full left-0 top-3 flex flex-col items-center justify-start pointer-events-none">
+            <span className="text-[10px] text-yellow-400 tracking-widest uppercase drop-shadow-[0_2px_4px_rgba(0,0,0,1)] bg-black/40 px-2 rounded-full border border-yellow-400/50 mb-1">
+              👑 High Score
+            </span>
+            <span className="text-xl text-white drop-shadow-[0_2px_4px_rgba(0,0,0,1)]">
+              {highScore.score} <span className="text-xs text-slate-300 ml-1">({highScore.names.join(' & ')})</span>
+            </span>
+          </div>
+        )}
+
+        {/* Player 2 HUD */}
+        <div className="flex flex-col items-end z-10">
+          <div className={`text-3xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${playerRole === 'p2' ? 'text-blue-400' : 'text-red-400'}`}>
+            {p2Score} :{p2Name}
+          </div>
+          <div className="text-[10px] text-yellow-400 tracking-widest uppercase drop-shadow-md bg-black/40 px-2 py-1 rounded-md mt-1 border border-yellow-400/30">
+            WINS: {matchWins.p2}
+          </div>
         </div>
       </div>
       
@@ -493,13 +518,15 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
             <div className="text-white font-black text-2xl animate-pulse tracking-widest">SYNCING HOST...</div>
           ) : (
             <div className="bg-slate-900 border-2 border-slate-700 p-8 rounded-3xl w-full shadow-2xl transform scale-100 animate-in zoom-in-95">
-              <h2 className="text-4xl font-black text-white mb-8 uppercase tracking-widest">Match Over</h2>
               
-              <div className="flex justify-between text-2xl font-bold mb-4 bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+              <h2 className="text-4xl font-black text-white mb-6 uppercase tracking-widest">Match Over</h2>
+              
+              <div className="flex justify-between text-2xl font-bold mb-3 bg-slate-950/50 p-4 rounded-xl border border-slate-800">
                 <span className="text-slate-400">{p1Name}</span>
                 <span className="text-white">{p1Score}</span>
               </div>
-              <div className="flex justify-between text-2xl font-bold mb-8 bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+              
+              <div className="flex justify-between text-2xl font-bold mb-6 bg-slate-950/50 p-4 rounded-xl border border-slate-800">
                 <span className="text-slate-400">{p2Name}</span>
                 <span className="text-white">{p2Score}</span>
               </div>
