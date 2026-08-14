@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-// Singleton Supabase Client to prevent "Multiple GoTrueClient instances" warning
+// Singleton Supabase Client
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const hasSupabase = supabaseUrl.startsWith('http') && supabaseKey.length > 0;
@@ -235,9 +235,12 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
   const [globalLeaderboard, setGlobalLeaderboard] = useState<GlobalScore[]>([]);
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
 
-  // Fetch Leaderboard from Supabase with Type Cast to prevent TS 'never' errors
+  // Fetch Leaderboard from Supabase
   const fetchGlobalLeaderboard = useCallback(async () => {
-    if (!hasSupabase || !supabase) return;
+    if (!hasSupabase || !supabase) {
+      console.log("[NEXUS DB] Skipping fetch: Supabase env vars missing");
+      return;
+    }
     const { data, error } = await (supabase.from('flappy_highscores') as any)
       .select('*')
       .order('score', { ascending: false })
@@ -253,6 +256,27 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
   useEffect(() => {
     fetchGlobalLeaderboard();
   }, [fetchGlobalLeaderboard]);
+
+  // DIAGNOSTIC BUTTON: Manual Test Insert
+  const handleTestInsert = async () => {
+    if (!hasSupabase || !supabase) {
+      alert("❌ ERROR: NEXT_PUBLIC_SUPABASE_URL or ANON_KEY is missing from your .env.local file!");
+      return;
+    }
+
+    const { data, error } = await (supabase.from('flappy_highscores') as any)
+      .insert([{ name: 'Test Player', score: 99 }])
+      .select();
+
+    if (error) {
+      alert(`❌ SUPABASE REJECTED INSERT:\n${error.message}\n\nDetails: ${error.details || 'Check RLS SQL'}`);
+      console.error("[DIAGNOSTIC TEST ERROR]:", error);
+    } else {
+      alert("✅ SUCCESS! 'Test Player: 99' inserted into Supabase!\nRefreshing leaderboard now...");
+      console.log("[DIAGNOSTIC TEST SUCCESS]:", data);
+      fetchGlobalLeaderboard();
+    }
+  };
 
   // Dynamically watch scores for the top HUD
   useEffect(() => {
@@ -337,23 +361,30 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
       role: playerRole, x: state.local.x, y: state.local.y, alive: false, score: state.local.score 
     });
 
-    // SUBMIT TO SUPABASE IMMEDIATELY WHEN YOUR BIRD CRASHES (Explicit 'as any' cast solves TS error)
-    if (!state.hasSubmittedScore && state.local.score > 0 && hasSupabase && supabase) {
-      state.hasSubmittedScore = true;
-      const localName = playerRole === 'p1' ? p1Name : p2Name;
-      
-      console.log(`[LEADERBOARD] Submitting score: ${state.local.score} for ${localName}...`);
+    // SUBMIT TO SUPABASE IMMEDIATELY WHEN YOUR BIRD CRASHES
+    if (!state.hasSubmittedScore && hasSupabase && supabase) {
+      if (state.local.score <= 0) {
+        console.log("[NEXUS DB] Skipped save: Score is 0 (Must score at least 1 point)");
+      } else {
+        state.hasSubmittedScore = true;
+        const localName = playerRole === 'p1' ? p1Name : p2Name;
+        
+        console.log(`[NEXUS DB] Submitting score: ${state.local.score} for ${localName}...`);
 
-      (supabase.from('flappy_highscores') as any)
-        .insert([{ name: localName, score: state.local.score }])
-        .then(({ error }: any) => {
-          if (error) {
-            console.error("[LEADERBOARD ERROR]:", error.message, error.details);
-          } else {
-            console.log("[LEADERBOARD SUCCESS] Score saved to Supabase!");
-            fetchGlobalLeaderboard(); // Refresh board
-          }
-        });
+        (supabase.from('flappy_highscores') as any)
+          .insert([{ name: localName, score: state.local.score }])
+          .select()
+          .then(({ data, error }: any) => {
+            if (error) {
+              console.error("[NEXUS DB ERROR]:", error.message, error.details);
+            } else {
+              console.log("[NEXUS DB SUCCESS] Score saved to Supabase!", data);
+              fetchGlobalLeaderboard(); 
+            }
+          });
+      }
+    } else if (!hasSupabase) {
+      console.warn("[NEXUS DB] Cannot save: Supabase client is not connected.");
     }
 
     checkGameOver();
@@ -584,11 +615,11 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
       {isLeaderboardOpen && (
         <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-6 z-50 pointer-events-auto backdrop-blur-md">
           <div className="bg-slate-900 border border-indigo-500/30 p-6 rounded-3xl w-full max-w-sm shadow-[0_0_50px_rgba(79,70,229,0.2)]">
-            <h2 className="text-3xl font-black text-white text-center uppercase tracking-widest mb-6">
+            <h2 className="text-3xl font-black text-white text-center uppercase tracking-widest mb-4">
               Global <span className="text-indigo-400">Top 10</span>
             </h2>
             
-            <div className="flex flex-col gap-2 mb-6 max-h-[300px] overflow-y-auto">
+            <div className="flex flex-col gap-2 mb-4 max-h-[260px] overflow-y-auto">
               {globalLeaderboard.length === 0 ? (
                 <div className="text-slate-500 text-center font-bold italic py-4">No scores yet. Be the first!</div>
               ) : (
@@ -601,7 +632,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
                   else if (index === 2) { rankStyle = "bg-amber-700/10 border-amber-700/50 text-amber-500"; }
 
                   return (
-                    <div key={entry.id} className={`flex justify-between items-center p-3 rounded-xl border ${rankStyle}`}>
+                    <div key={entry.id || index} className={`flex justify-between items-center p-3 rounded-xl border ${rankStyle}`}>
                       <div className="flex items-center gap-3 font-bold">
                         <span className="w-6 text-center opacity-50">#{index + 1}</span>
                         <span className="truncate max-w-[120px]">{entry.name} {crown}</span>
@@ -612,6 +643,11 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
                 })
               )}
             </div>
+
+            {/* DIAGNOSTIC TEST BUTTON */}
+            <button onClick={handleTestInsert} className="w-full mb-3 bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 rounded-xl text-xs transition-all shadow-md">
+              🧪 Test DB Connection (Send Score 99)
+            </button>
 
             <button onClick={() => setIsLeaderboardOpen(false)} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-xl transition-all">
               Close Leaderboard
