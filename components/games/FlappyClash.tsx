@@ -1,6 +1,13 @@
 'use client';
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Local Supabase Client for Database Storage
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const hasSupabase = supabaseUrl.startsWith('http') && supabaseKey.length > 0;
+const supabase = hasSupabase ? createClient(supabaseUrl, supabaseKey) : null;
 
 interface GameProps {
   roomCode: string;
@@ -10,6 +17,8 @@ interface GameProps {
   broadcastPayload: (event: string, payload: any) => void;
   subscribePayload: (event: string, callback: (payload: any) => void) => () => void;
 }
+
+type GlobalScore = { id: string, name: string, score: number };
 
 // ------------------------------------------------------------------
 // UTILS: PRNG & Audio
@@ -207,16 +216,35 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
   const [p1Score, setP1Score] = useState(0);
   const [p2Score, setP2Score] = useState(0);
 
-  // --- NEW FEATURES: MATCH WINS & HIGH SCORE ---
+  // Match Wins & High Score State
   const [matchWins, setMatchWins] = useState({ p1: 0, p2: 0 });
   const [highScore, setHighScore] = useState({ score: 0, names: [] as string[] });
+  
+  // Global Database Leaderboard
+  const [globalLeaderboard, setGlobalLeaderboard] = useState<GlobalScore[]>([]);
+  const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
 
-  // Dynamically watch scores and update high score immediately!
+  // Fetch Leaderboard on mount
+  const fetchGlobalLeaderboard = async () => {
+    if (!hasSupabase || !supabase) return;
+    const { data } = await supabase
+      .from('flappy_highscores')
+      .select('*')
+      .order('score', { ascending: false })
+      .limit(10);
+    if (data) setGlobalLeaderboard(data);
+  };
+
+  useEffect(() => {
+    fetchGlobalLeaderboard();
+  }, []);
+
+  // Dynamically watch scores for the top HUD
   useEffect(() => {
     const currentHighest = Math.max(p1Score, p2Score);
     if (currentHighest > highScore.score) {
       setHighScore(prev => {
-        if (currentHighest <= prev.score) return prev; // Race condition safety
+        if (currentHighest <= prev.score) return prev; 
         const names = [];
         if (p1Score === currentHighest) names.push(p1Name);
         if (p2Score === currentHighest) names.push(p2Name);
@@ -230,7 +258,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
         return { score: prev.score, names: Array.from(newNames) };
       });
     }
-  }, [p1Score, p2Score, p1Name, p2Name]); // Intentionally excluding highScore to avoid infinite loops
+  }, [p1Score, p2Score, p1Name, p2Name]); 
   
   // Physics Constants
   const GRAVITY = 0.35;
@@ -250,7 +278,8 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
     rival: { x: 0, y: 320, alive: true, score: 0 },
     lastSyncTime: 0,
     lastLocalScore: 0,
-    lastRivalY: 320
+    lastRivalY: 320,
+    hasSubmittedScore: false // Prevents DB spamming per round
   });
 
   const generatePipe = useCallback((index: number, seed: number) => {
@@ -268,7 +297,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
         state.status = 'GAMEOVER';
         setGameState('GAMEOVER');
 
-        // --- NEW FEATURE: CALCULATE EXACT MATCH WINNER ONCE PER ROUND ---
+        // Match Winner Logic
         const finalP1 = playerRole === 'p1' ? state.local.score : state.rival.score;
         const finalP2 = playerRole === 'p2' ? state.local.score : state.rival.score;
         
@@ -278,11 +307,21 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
           setMatchWins(prev => ({ ...prev, p2: prev.p2 + 1 }));
         }
 
+        // DATABASE SAVE LOGIC
+        if (!state.hasSubmittedScore && state.local.score > 0 && hasSupabase && supabase) {
+          state.hasSubmittedScore = true;
+          const localName = playerRole === 'p1' ? p1Name : p2Name;
+          
+          supabase.from('flappy_highscores')
+            .insert([{ name: localName, score: state.local.score }])
+            .then(() => fetchGlobalLeaderboard()); // Refresh board
+        }
+
         timeoutRef.current = setTimeout(() => {
             setShowGameOverUI(true);
         }, 1200); 
     }
-  }, [playerRole]);
+  }, [playerRole, p1Name, p2Name]);
 
   const triggerDeathSync = useCallback(() => {
     const state = stateRef.current;
@@ -300,11 +339,12 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
         seed: payload.seed, status: 'PLAYING',
         local: { x: 0, y: 320, vel: 0, alive: true, score: 0 },
         rival: { x: 0, y: 320, alive: true, score: 0 },
-        lastSyncTime: 0, lastLocalScore: 0, lastRivalY: 320
+        lastSyncTime: 0, lastLocalScore: 0, lastRivalY: 320, hasSubmittedScore: false
       };
       setP1Score(0); setP2Score(0);
       setGameState('PLAYING');
       setShowGameOverUI(false);
+      setIsLeaderboardOpen(false);
     });
 
     const unsubSync = subscribePayload('SYNC_FLAPPY', (payload) => {
@@ -326,11 +366,12 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
         seed: payload.seed, status: 'PLAYING',
         local: { x: 0, y: 320, vel: 0, alive: true, score: 0 },
         rival: { x: 0, y: 320, alive: true, score: 0 },
-        lastSyncTime: 0, lastLocalScore: 0, lastRivalY: 320
+        lastSyncTime: 0, lastLocalScore: 0, lastRivalY: 320, hasSubmittedScore: false
       };
       setP1Score(0); setP2Score(0);
       setGameState('PLAYING');
       setShowGameOverUI(false);
+      setIsLeaderboardOpen(false);
     });
 
     if (playerRole === 'p1') {
@@ -473,10 +514,10 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
   return (
     <div className="w-full max-w-[420px] aspect-[9/16] relative bg-black shadow-2xl overflow-hidden touch-none" onTouchStart={handleFlap} onMouseDown={handleFlap}>
       
-      {/* 👑 NEW TOP HUD WITH STATS & HIGH SCORE */}
+      {/* 👑 TOP HUD WITH STATS & HIGH SCORE */}
       <div className="absolute top-0 w-full p-4 flex justify-between z-10 font-black pointer-events-none shadow-[inset_0_70px_70px_rgba(0,0,0,0.6)]">
         
-        {/* Player 1 HUD */}
+        {/* Player 1 HUD (Reduced Font Size) */}
         <div className="flex flex-col items-start z-10">
           <div className={`text-lg sm:text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${playerRole === 'p1' ? 'text-red-400' : 'text-blue-400'}`}>
             {p1Name}: {p1Score}
@@ -486,7 +527,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
           </div>
         </div>
 
-        {/* High Score Center Crown */}
+        {/* Local Session High Score */}
         {highScore.score > 0 && (
           <div className="absolute w-full left-0 top-3 flex flex-col items-center justify-start pointer-events-none">
             <span className="text-[10px] text-yellow-400 tracking-widest uppercase drop-shadow-[0_2px_4px_rgba(0,0,0,1)] bg-black/40 px-2 rounded-full border border-yellow-400/50 mb-1">
@@ -498,7 +539,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
           </div>
         )}
 
-        {/* Player 2 HUD */}
+        {/* Player 2 HUD (Reduced Font Size) */}
         <div className="flex flex-col items-end z-10">
           <div className={`text-lg sm:text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] ${playerRole === 'p2' ? 'text-blue-400' : 'text-red-400'}`}>
             {p2Score} :{p2Name}
@@ -511,8 +552,48 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
       
       <canvas ref={canvasRef} width={420} height={746} className="w-full h-full object-cover" />
       
+      {/* GLOBAL LEADERBOARD OVERLAY */}
+      {isLeaderboardOpen && (
+        <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-6 z-50 pointer-events-auto backdrop-blur-md">
+          <div className="bg-slate-900 border border-indigo-500/30 p-6 rounded-3xl w-full max-w-sm shadow-[0_0_50px_rgba(79,70,229,0.2)]">
+            <h2 className="text-3xl font-black text-white text-center uppercase tracking-widest mb-6">
+              Global <span className="text-indigo-400">Top 10</span>
+            </h2>
+            
+            <div className="flex flex-col gap-2 mb-6 max-h-[300px] overflow-y-auto">
+              {globalLeaderboard.length === 0 ? (
+                <div className="text-slate-500 text-center font-bold italic py-4">No scores yet. Be the first!</div>
+              ) : (
+                globalLeaderboard.map((entry, index) => {
+                  let rankStyle = "bg-slate-950/50 border-slate-800 text-slate-300";
+                  let crown = "";
+                  
+                  if (index === 0) { rankStyle = "bg-yellow-500/10 border-yellow-500/50 text-yellow-400 shadow-[0_0_15px_rgba(234,179,8,0.2)]"; crown = "👑"; }
+                  else if (index === 1) { rankStyle = "bg-slate-300/10 border-slate-300/50 text-slate-200"; }
+                  else if (index === 2) { rankStyle = "bg-amber-700/10 border-amber-700/50 text-amber-500"; }
+
+                  return (
+                    <div key={entry.id} className={`flex justify-between items-center p-3 rounded-xl border ${rankStyle}`}>
+                      <div className="flex items-center gap-3 font-bold">
+                        <span className="w-6 text-center opacity-50">#{index + 1}</span>
+                        <span className="truncate max-w-[120px]">{entry.name} {crown}</span>
+                      </div>
+                      <span className="font-black text-xl">{entry.score}</span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <button onClick={() => setIsLeaderboardOpen(false)} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-xl transition-all">
+              Close Leaderboard
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Game Over / Waiting Overlay */}
-      {(gameState === 'WAITING' || showGameOverUI) && (
+      {(gameState === 'WAITING' || showGameOverUI) && !isLeaderboardOpen && (
         <div className="absolute inset-0 bg-slate-950/80 flex flex-col items-center justify-center p-6 text-center z-20 pointer-events-auto backdrop-blur-sm transition-opacity duration-500">
           {gameState === 'WAITING' ? (
             <div className="text-white font-black text-2xl animate-pulse tracking-widest">SYNCING HOST...</div>
@@ -521,17 +602,17 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
               
               <h2 className="text-4xl font-black text-white mb-6 uppercase tracking-widest">Match Over</h2>
               
-              <div className="flex justify-between text-2xl font-bold mb-3 bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+              <div className="flex justify-between text-xl font-bold mb-3 bg-slate-950/50 p-4 rounded-xl border border-slate-800">
                 <span className="text-slate-400">{p1Name}</span>
                 <span className="text-white">{p1Score}</span>
               </div>
               
-              <div className="flex justify-between text-2xl font-bold mb-6 bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+              <div className="flex justify-between text-xl font-bold mb-6 bg-slate-950/50 p-4 rounded-xl border border-slate-800">
                 <span className="text-slate-400">{p2Name}</span>
                 <span className="text-white">{p2Score}</span>
               </div>
 
-              <div className="text-2xl font-black mb-8 uppercase tracking-widest drop-shadow-lg">
+              <div className="text-2xl font-black mb-6 uppercase tracking-widest drop-shadow-lg">
                 {p1Score === p2Score 
                   ? <span className="text-slate-300">DRAW!</span> 
                   : p1Score > p2Score 
@@ -539,9 +620,14 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
                     : <span className="text-emerald-400">{p2Name} WINS!</span>}
               </div>
 
-              <button onClick={triggerRematch} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xl py-5 rounded-xl transition-transform active:scale-95 shadow-[0_0_20px_rgba(79,70,229,0.4)]">
-                Instant Rematch
-              </button>
+              <div className="flex flex-col gap-3">
+                <button onClick={triggerRematch} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xl py-4 rounded-xl transition-transform active:scale-95 shadow-[0_0_20px_rgba(79,70,229,0.4)]">
+                  Instant Rematch
+                </button>
+                <button onClick={() => setIsLeaderboardOpen(true)} className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-bold text-lg py-3 rounded-xl transition-transform active:scale-95 flex items-center justify-center gap-2">
+                  🏆 Global Leaderboard
+                </button>
+              </div>
             </div>
           )}
         </div>
