@@ -227,12 +227,17 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
   // Fetch Leaderboard on mount
   const fetchGlobalLeaderboard = async () => {
     if (!hasSupabase || !supabase) return;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('flappy_highscores')
       .select('*')
       .order('score', { ascending: false })
       .limit(10);
-    if (data) setGlobalLeaderboard(data);
+    
+    if (error) {
+      console.error("Supabase Fetch Error:", error.message);
+    } else if (data) {
+      setGlobalLeaderboard(data);
+    }
   };
 
   useEffect(() => {
@@ -307,14 +312,20 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
           setMatchWins(prev => ({ ...prev, p2: prev.p2 + 1 }));
         }
 
-        // DATABASE SAVE LOGIC
+        // DATABASE SAVE LOGIC (With Error Catching)
         if (!state.hasSubmittedScore && state.local.score > 0 && hasSupabase && supabase) {
           state.hasSubmittedScore = true;
           const localName = playerRole === 'p1' ? p1Name : p2Name;
           
           supabase.from('flappy_highscores')
             .insert([{ name: localName, score: state.local.score }])
-            .then(() => fetchGlobalLeaderboard()); // Refresh board
+            .then(({ error }) => {
+              if (error) {
+                console.error("SUPABASE INSERT ERROR:", error.message, error.details);
+              } else {
+                fetchGlobalLeaderboard(); // Refresh board safely
+              }
+            });
         }
 
         timeoutRef.current = setTimeout(() => {
