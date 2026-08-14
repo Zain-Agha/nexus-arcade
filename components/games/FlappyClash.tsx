@@ -3,11 +3,22 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-// Initialize Local Supabase Client for Database Storage
+// Singleton Supabase Client to prevent "Multiple GoTrueClient instances" warning
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const hasSupabase = supabaseUrl.startsWith('http') && supabaseKey.length > 0;
-const supabase = hasSupabase ? createClient(supabaseUrl, supabaseKey) : null;
+
+let supabase: ReturnType<typeof createClient> | null = null;
+if (hasSupabase) {
+  if (typeof window !== 'undefined') {
+    if (!(window as any).__supabase) {
+      (window as any).__supabase = createClient(supabaseUrl, supabaseKey);
+    }
+    supabase = (window as any).__supabase;
+  } else {
+    supabase = createClient(supabaseUrl, supabaseKey);
+  }
+}
 
 interface GameProps {
   roomCode: string;
@@ -224,25 +235,24 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
   const [globalLeaderboard, setGlobalLeaderboard] = useState<GlobalScore[]>([]);
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
 
-  // Fetch Leaderboard on mount
-  const fetchGlobalLeaderboard = async () => {
+  // Fetch Leaderboard from Supabase with Type Cast to prevent TS 'never' errors
+  const fetchGlobalLeaderboard = useCallback(async () => {
     if (!hasSupabase || !supabase) return;
-    const { data, error } = await supabase
-      .from('flappy_highscores')
+    const { data, error } = await (supabase.from('flappy_highscores') as any)
       .select('*')
       .order('score', { ascending: false })
       .limit(10);
     
     if (error) {
-      console.error("Supabase Fetch Error:", error.message);
+      console.error("[LEADERBOARD FETCH ERROR]:", error.message);
     } else if (data) {
-      setGlobalLeaderboard(data);
+      setGlobalLeaderboard(data as GlobalScore[]);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchGlobalLeaderboard();
-  }, []);
+  }, [fetchGlobalLeaderboard]);
 
   // Dynamically watch scores for the top HUD
   useEffect(() => {
@@ -284,7 +294,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
     lastSyncTime: 0,
     lastLocalScore: 0,
     lastRivalY: 320,
-    hasSubmittedScore: false // Prevents DB spamming per round
+    hasSubmittedScore: false
   });
 
   const generatePipe = useCallback((index: number, seed: number) => {
@@ -312,35 +322,42 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
           setMatchWins(prev => ({ ...prev, p2: prev.p2 + 1 }));
         }
 
-        // DATABASE SAVE LOGIC (With Error Catching)
-        if (!state.hasSubmittedScore && state.local.score > 0 && hasSupabase && supabase) {
-          state.hasSubmittedScore = true;
-          const localName = playerRole === 'p1' ? p1Name : p2Name;
-          
-          supabase.from('flappy_highscores')
-            .insert([{ name: localName, score: state.local.score }])
-            .then(({ error }) => {
-              if (error) {
-                console.error("SUPABASE INSERT ERROR:", error.message, error.details);
-              } else {
-                fetchGlobalLeaderboard(); // Refresh board safely
-              }
-            });
-        }
-
         timeoutRef.current = setTimeout(() => {
             setShowGameOverUI(true);
         }, 1200); 
     }
-  }, [playerRole, p1Name, p2Name]);
+  }, [playerRole]);
 
+  // SUBMIT SCORE IMMEDIATELY ON LOCAL BIRD CRASH
   const triggerDeathSync = useCallback(() => {
     const state = stateRef.current;
+    
+    // Broadcast death to rival
     broadcastPayload('SYNC_FLAPPY', { 
       role: playerRole, x: state.local.x, y: state.local.y, alive: false, score: state.local.score 
     });
+
+    // SUBMIT TO SUPABASE IMMEDIATELY WHEN YOUR BIRD CRASHES (Explicit 'as any' cast solves TS error)
+    if (!state.hasSubmittedScore && state.local.score > 0 && hasSupabase && supabase) {
+      state.hasSubmittedScore = true;
+      const localName = playerRole === 'p1' ? p1Name : p2Name;
+      
+      console.log(`[LEADERBOARD] Submitting score: ${state.local.score} for ${localName}...`);
+
+      (supabase.from('flappy_highscores') as any)
+        .insert([{ name: localName, score: state.local.score }])
+        .then(({ error }: any) => {
+          if (error) {
+            console.error("[LEADERBOARD ERROR]:", error.message, error.details);
+          } else {
+            console.log("[LEADERBOARD SUCCESS] Score saved to Supabase!");
+            fetchGlobalLeaderboard(); // Refresh board
+          }
+        });
+    }
+
     checkGameOver();
-  }, [playerRole, broadcastPayload, checkGameOver]);
+  }, [playerRole, p1Name, p2Name, broadcastPayload, checkGameOver, fetchGlobalLeaderboard]);
 
   // Network Subscriptions
   useEffect(() => {
@@ -635,7 +652,7 @@ export default function FlappyClash({ playerRole, p1Name, p2Name, broadcastPaylo
                 <button onClick={triggerRematch} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xl py-4 rounded-xl transition-transform active:scale-95 shadow-[0_0_20px_rgba(79,70,229,0.4)]">
                   Instant Rematch
                 </button>
-                <button onClick={() => setIsLeaderboardOpen(true)} className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-bold text-lg py-3 rounded-xl transition-transform active:scale-95 flex items-center justify-center gap-2">
+                <button onClick={() => { fetchGlobalLeaderboard(); setIsLeaderboardOpen(true); }} className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-bold text-lg py-3 rounded-xl transition-transform active:scale-95 flex items-center justify-center gap-2">
                   🏆 Global Leaderboard
                 </button>
               </div>
