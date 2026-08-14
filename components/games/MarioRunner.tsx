@@ -69,7 +69,6 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       osc.start();
       osc.stop(ctx.currentTime + duration);
       
-      // ANDROID-SAFE: Disconnect nodes to prevent memory leaks
       osc.onended = () => {
         osc.disconnect();
         gain.disconnect();
@@ -115,7 +114,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
   }, []);
 
   // ------------------------------------------------------------------
-  // NETWORK SYNC LOGIC (Android-Safe Continuous Sync)
+  // NETWORK SYNC LOGIC
   // ------------------------------------------------------------------
   useEffect(() => {
     const syncInterval = setInterval(() => {
@@ -140,7 +139,6 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           st.p1.x = data.p1x;
         }
 
-        // ANDROID-SAFE: Only update React state if values actually changed!
         if (data.s1 !== undefined && data.s1 !== st.p1Score) {
           st.p1Score = data.s1;
           setP1Score(data.s1);
@@ -205,7 +203,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
 
   // Touch & Pointer Input
   const handlePointer = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    getAudioContext(); // Resumes audio context on first touch on Android
+    getAudioContext();
     const canvas = canvasRef.current;
     if (!canvas) return;
     
@@ -224,7 +222,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
   };
 
   // ------------------------------------------------------------------
-  // MAIN RENDER & PHYSICS ENGINE (60 FPS) - LEGENDARY EDITION
+  // MAIN RENDER & PHYSICS ENGINE (60 FPS)
   // ------------------------------------------------------------------
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -245,7 +243,6 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       st.shake = 12;
       playTone(150, 'sawtooth', 0.4, 0.15);
 
-      // Re-center Ball
       const nextDir: 1 | -1 = scoringPlayer === 'p1' ? -1 : 1;
       st.ball = { 
         x: CW/2, y: CH/2, 
@@ -272,7 +269,6 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     const render = () => {
       animationId = requestAnimationFrame(render);
       
-      // LEGENDARY FIX: try/finally block guarantees ctx.restore() is called even if a draw error occurs
       try {
         const st = stateRef.current;
         const b = st.ball;
@@ -295,12 +291,12 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
             playTone(400, 'sine', 0.05);
           }
 
-          // P1 Paddle Hit
-          const p1Top = CH - 40;
-          if (b.vy > 0 && b.y + BR >= p1Top && prevY + BR <= p1Top + PH) {
-            if (Math.abs(b.x - st.p1.x) < PW/2 + BR) {
+          // P1 Paddle Hit (Bottom Paddle: Y = 560 to 572)
+          const p1Top = CH - 40; // 560
+          if (b.vy > 0 && b.y + BR >= p1Top && prevY - BR <= p1Top + PH) {
+            if (Math.abs(b.x - st.p1.x) <= PW/2 + BR) {
               b.vy *= -1;
-              b.y = p1Top - BR;
+              b.y = p1Top - BR; // 552
               
               if (Math.abs(p1Vel) > 3) {
                 b.vx += (p1Vel * 0.15);
@@ -320,12 +316,13 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
             }
           }
 
-          // P2 Paddle Hit
-          const p2Bottom = 40 + PH;
-          if (b.vy < 0 && b.y - BR <= p2Bottom && prevY - BR >= 40) {
-            if (Math.abs(b.x - st.p2.x) < PW/2 + BR) {
+          // P2 Paddle Hit (Top Paddle: Y = 40 to 52)
+          // FIXED MATH: Checks if bottom of ball (prevY + BR) was below the top edge of P2 paddle (>= 40)
+          const p2Bottom = 40 + PH; // 52
+          if (b.vy < 0 && b.y - BR <= p2Bottom && prevY + BR >= 40) {
+            if (Math.abs(b.x - st.p2.x) <= PW/2 + BR) {
               b.vy *= -1;
-              b.y = p2Bottom + BR;
+              b.y = p2Bottom + BR; // 60
               
               if (Math.abs(p2Vel) > 3) {
                 b.vx += (p2Vel * 0.15);
@@ -389,7 +386,6 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         const localColor = '#06b6d4'; 
         const rivalColor = '#ec4899'; 
         
-        // Android-safe Paddle Drawing
         const drawPaddle = (x: number, y: number, color: string) => {
           ctx.shadowColor = color;
           ctx.shadowBlur = 10;
@@ -408,7 +404,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           drawPaddle(mapX(st.p1.x), mapY(CH - 40), rivalColor);
         }
 
-        // Trails (LEGENDARY FIX: Math.max prevents negative radius crash)
+        // Trails
         st.trail.forEach((t) => {
           t.age -= 0.06;
           if (t.age > 0) {
@@ -434,7 +430,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           ctx.shadowBlur = 0;
         }
 
-        // Particles (LEGENDARY FIX: if guard + Math.max prevents NaN/negative radius stack overflow)
+        // Particles
         st.particles.forEach(p => {
           p.x += p.vx; 
           p.y += p.vy; 
@@ -454,8 +450,6 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       } catch (e) {
         console.error("Render Loop Error:", e);
       } finally {
-        // LEGENDARY FIX: Absolutely guarantees the canvas state is restored,
-        // preventing the stack overflow that was freezing Android.
         ctx.restore();
       }
     };
@@ -491,7 +485,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         className="w-full max-w-[400px] aspect-[2/3] object-cover bg-slate-950 border-x-2 border-slate-800 shadow-2xl cursor-crosshair touch-none" 
       />
 
-      {/* Overlays - Mobile GPU Optimized */}
+      {/* Overlays */}
       {gameState !== 'PLAYING' && (
         <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center p-6 z-20 transition-opacity duration-300 pointer-events-none">
           
