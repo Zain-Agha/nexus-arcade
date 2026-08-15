@@ -171,6 +171,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
 
     const unsubGuestSync = subscribePayload('GUEST_SYNC', (data) => {
       if (playerRole === 'p1' && !isNaN(data.p2x)) {
+        stateRef.current.p2.lastX = stateRef.current.p2.x; // Track previous position for lag comp
         stateRef.current.p2.x = data.p2x;
       }
     });
@@ -215,8 +216,10 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     x = Math.max(PW/2, Math.min(CW - PW/2, x));
 
     if (playerRole === 'p1') {
+      stateRef.current.p1.lastX = stateRef.current.p1.x;
       stateRef.current.p1.x = x;
     } else {
+      stateRef.current.p2.lastX = stateRef.current.p2.x;
       stateRef.current.p2.x = x;
     }
   };
@@ -273,14 +276,13 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         const st = stateRef.current;
         const b = st.ball;
 
-        const p1Vel = st.p1.x - st.p1.lastX; st.p1.lastX = st.p1.x;
-        const p2Vel = st.p2.x - st.p2.lastX; st.p2.lastX = st.p2.x;
+        const p1Vel = st.p1.x - st.p1.lastX;
+        const p2Vel = st.p2.x - st.p2.lastX;
 
         // ---------------------------------------------------------
         // PHYSICS (Host Only)
         // ---------------------------------------------------------
         if (playerRole === 'p1' && st.status === 'PLAYING') {
-          const prevY = b.y;
           b.x += b.vx;
           b.y += b.vy;
 
@@ -291,10 +293,15 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
             playTone(400, 'sine', 0.05);
           }
 
-          // P1 Paddle Hit (Bottom Paddle: Y = 560 to 572)
+          // 1. P1 PADDLE HIT / GOAL CHECK (Bottom Paddle: Y = 560)
           const p1Top = CH - 40; // 560
-          if (b.vy > 0 && b.y + BR >= p1Top && prevY - BR <= p1Top + PH) {
-            if (Math.abs(b.x - st.p1.x) <= PW/2 + BR) {
+          if (b.vy > 0 && b.y + BR >= p1Top) {
+            // Local P1 Lag Buffer (+5px)
+            const p1MinX = Math.min(st.p1.x, st.p1.lastX) - PW/2 - BR - 5;
+            const p1MaxX = Math.max(st.p1.x, st.p1.lastX) + PW/2 + BR + 5;
+            
+            if (b.x >= p1MinX && b.x <= p1MaxX) {
+              // HIT! Bounce ball back up
               b.vy *= -1;
               b.y = p1Top - BR; // 552
               
@@ -313,14 +320,21 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
               const mag = Math.sqrt(b.vx*b.vx + b.vy*b.vy) || 1;
               b.vx = (b.vx / mag) * b.speed;
               b.vy = (b.vy / mag) * b.speed;
+            } else {
+              // MISSED PADDLE -> INSTANT GOAL FOR P2!
+              triggerScore('p2', b.x, p1Top);
             }
           }
 
-          // P2 Paddle Hit (Top Paddle: Y = 40 to 52)
-          // FIXED MATH: Checks if bottom of ball (prevY + BR) was below the top edge of P2 paddle (>= 40)
+          // 2. P2 PADDLE HIT / GOAL CHECK (Top Paddle: Y = 52)
           const p2Bottom = 40 + PH; // 52
-          if (b.vy < 0 && b.y - BR <= p2Bottom && prevY + BR >= 40) {
-            if (Math.abs(b.x - st.p2.x) <= PW/2 + BR) {
+          if (b.vy < 0 && b.y - BR <= p2Bottom) {
+            // 15px Lag Compensation Buffer + Swept Vector Range for P2 over Network
+            const p2MinX = Math.min(st.p2.x, st.p2.lastX) - PW/2 - BR - 15;
+            const p2MaxX = Math.max(st.p2.x, st.p2.lastX) + PW/2 + BR + 15;
+            
+            if (b.x >= p2MinX && b.x <= p2MaxX) {
+              // HIT! Bounce ball back down
               b.vy *= -1;
               b.y = p2Bottom + BR; // 60
               
@@ -339,12 +353,11 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
               const mag = Math.sqrt(b.vx*b.vx + b.vy*b.vy) || 1;
               b.vx = (b.vx / mag) * b.speed;
               b.vy = (b.vy / mag) * b.speed;
+            } else {
+              // MISSED PADDLE -> INSTANT GOAL FOR P1!
+              triggerScore('p1', b.x, p2Bottom);
             }
           }
-
-          // Scoring Trigger
-          if (b.y < 0) triggerScore('p1', b.x, 10);
-          else if (b.y > CH) triggerScore('p2', b.x, CH - 10);
         }
 
         // Guest Interpolation
