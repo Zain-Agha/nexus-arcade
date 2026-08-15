@@ -76,12 +76,12 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     } catch(e) {}
   }, [getAudioContext]);
 
-  // 60FPS Mutable Physics State
+  // Mutable Physics State
   const stateRef = useRef({
     status: 'WAITING',
     ball: { x: CW/2, y: CH/2, vx: 0, vy: 0, speed: 6, isSmash: false },
-    p1: { x: CW/2, lastX: CW/2 }, // Bottom Paddle (Host)
-    p2: { x: CW/2, lastX: CW/2 }, // Top Paddle (Guest)
+    p1: { x: CW/2, lastX: CW/2 }, 
+    p2: { x: CW/2, lastX: CW/2 }, 
     p1Score: 0,
     p2Score: 0,
     msg: '',
@@ -90,7 +90,6 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     shake: 0,
   });
 
-  // Generate Particle Explosion
   const spawnExplosion = useCallback((x: number, y: number, color: string, count = 15) => {
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
@@ -117,6 +116,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
   // NETWORK SYNC LOGIC
   // ------------------------------------------------------------------
   useEffect(() => {
+    // Increased sync rate to 30ms for snappier real-time paddle movement over the network
     const syncInterval = setInterval(() => {
       const st = stateRef.current;
       if (playerRole === 'p1') {
@@ -126,26 +126,34 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       } else if (playerRole === 'p2') {
         broadcastPayload('GUEST_SYNC', { p2x: st.p2.x });
       }
-    }, 50);
+    }, 30);
 
     const unsubHostSync = subscribePayload('HOST_SYNC', (data) => {
-      if (playerRole === 'p2') {
+      if (playerRole === 'p2' && data) {
         const st = stateRef.current;
         
-        if (data.b && !isNaN(data.b.x) && !isNaN(data.b.y)) {
-          st.ball = { ...data.b }; 
+        if (data.b && typeof data.b.x === 'number' && typeof data.b.y === 'number') {
+          // If guest visually predicted a bounce, don't let an outdated delayed packet flip the Y-direction backward
+          const guestPredictedBounce = st.ball.vy * data.b.vy < 0 && st.status === 'PLAYING';
+          if (!guestPredictedBounce) {
+             st.ball = { ...data.b }; 
+          } else {
+             // Overwrite position securely but retain our locally predicted bounce direction
+             st.ball.x = data.b.x;
+             st.ball.speed = data.b.speed;
+             st.ball.isSmash = data.b.isSmash;
+          }
         }
-        if (!isNaN(data.p1x)) {
+        
+        if (typeof data.p1x === 'number') {
           st.p1.x = data.p1x;
         }
 
         if (data.s1 !== undefined && data.s1 !== st.p1Score) {
-          st.p1Score = data.s1;
-          setP1Score(data.s1);
+          st.p1Score = data.s1; setP1Score(data.s1);
         }
         if (data.s2 !== undefined && data.s2 !== st.p2Score) {
-          st.p2Score = data.s2;
-          setP2Score(data.s2);
+          st.p2Score = data.s2; setP2Score(data.s2);
         }
 
         if (data.st === 'SCORE' && st.status === 'PLAYING') {
@@ -161,17 +169,15 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         }
 
         if (data.st !== st.status) {
-          st.status = data.st;
-          setGameState(data.st);
+          st.status = data.st; setGameState(data.st);
         }
-
         st.msg = data.msg || st.msg;
       }
     });
 
     const unsubGuestSync = subscribePayload('GUEST_SYNC', (data) => {
-      if (playerRole === 'p1' && !isNaN(data.p2x)) {
-        stateRef.current.p2.lastX = stateRef.current.p2.x; // Track previous position for lag comp
+      if (playerRole === 'p1' && data && typeof data.p2x === 'number') {
+        stateRef.current.p2.lastX = stateRef.current.p2.x;
         stateRef.current.p2.x = data.p2x;
       }
     });
@@ -180,8 +186,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       const st = stateRef.current;
       st.p1Score = 0; st.p2Score = 0;
       setP1Score(0); setP2Score(0);
-      st.status = 'PLAYING';
-      setGameState('PLAYING');
+      st.status = 'PLAYING'; setGameState('PLAYING');
       if (playerRole === 'p1') resetBall(1);
     });
 
@@ -233,11 +238,9 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
     if (!canvas || !ctx) return;
     let animationId: number;
 
-    // Internal Scoring Logic (Host Only)
     const triggerScore = (scoringPlayer: 'p1' | 'p2', x: number, y: number) => {
       const st = stateRef.current;
-      st.status = 'SCORE';
-      setGameState('SCORE');
+      st.status = 'SCORE'; setGameState('SCORE');
       
       if (scoringPlayer === 'p1') st.p1Score += 1; else st.p2Score += 1;
       setP1Score(st.p1Score); setP2Score(st.p2Score);
@@ -247,24 +250,17 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       playTone(150, 'sawtooth', 0.4, 0.15);
 
       const nextDir: 1 | -1 = scoringPlayer === 'p1' ? -1 : 1;
-      st.ball = { 
-        x: CW/2, y: CH/2, 
-        vx: (Math.random() > 0.5 ? 2.5 : -2.5), 
-        vy: 6 * nextDir, 
-        speed: 6, isSmash: false 
-      };
+      st.ball = { x: CW/2, y: CH/2, vx: (Math.random() > 0.5 ? 2.5 : -2.5), vy: 6 * nextDir, speed: 6, isSmash: false };
       
       setTimeout(() => {
         if (st.p1Score >= WIN_SCORE || st.p2Score >= WIN_SCORE) {
-          st.status = 'GAMEOVER';
-          setGameState('GAMEOVER');
+          st.status = 'GAMEOVER'; setGameState('GAMEOVER');
           const winMsg = st.p1Score >= WIN_SCORE ? 'P1 WINS!' : 'P2 WINS!';
           st.msg = winMsg;
           setResultMsg((winMsg === 'P1 WINS!' && playerRole === 'p1') || (winMsg === 'P2 WINS!' && playerRole === 'p2') ? 'YOU WIN!' : 'DEFEATED!');
           playTone(600, 'square', 0.8, 0.2);
         } else {
-          st.status = 'PLAYING';
-          setGameState('PLAYING');
+          st.status = 'PLAYING'; setGameState('PLAYING');
         }
       }, 1600);
     };
@@ -286,85 +282,100 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           b.x += b.vx;
           b.y += b.vy;
 
-          // Wall Bounces
           if (b.x <= BR || b.x >= CW - BR) {
             b.vx *= -1;
             b.x = b.x <= BR ? BR : CW - BR;
             playTone(400, 'sine', 0.05);
           }
 
-          // 1. P1 PADDLE HIT / GOAL CHECK (Bottom Paddle: Y = 560)
-          const p1Top = CH - 40; // 560
+          // 1. P1 PADDLE HIT
+          const p1Top = CH - 40; 
           if (b.vy > 0 && b.y + BR >= p1Top) {
-            // Local P1 Lag Buffer (+5px)
-            const p1MinX = Math.min(st.p1.x, st.p1.lastX) - PW/2 - BR - 5;
-            const p1MaxX = Math.max(st.p1.x, st.p1.lastX) + PW/2 + BR + 5;
+            // Generous 25px lag buffer logic safely tracks moving paddles
+            const p1MinX = st.p1.x - PW/2 - BR - 25;
+            const p1MaxX = st.p1.x + PW/2 + BR + 25;
             
             if (b.x >= p1MinX && b.x <= p1MaxX) {
-              // HIT! Bounce ball back up
               b.vy *= -1;
-              b.y = p1Top - BR; // 552
+              b.y = p1Top - BR; 
               
               if (Math.abs(p1Vel) > 3) {
                 b.vx += (p1Vel * 0.15);
                 b.speed = Math.min(14, b.speed + 1.2);
                 b.isSmash = true;
-                playTone(800, 'square', 0.08);
-                st.shake = 4;
+                playTone(800, 'square', 0.08); st.shake = 4;
               } else {
                 b.speed = Math.min(12, b.speed + 0.3);
                 b.isSmash = false;
                 playTone(600, 'sine', 0.08);
               }
-              
               const mag = Math.sqrt(b.vx*b.vx + b.vy*b.vy) || 1;
               b.vx = (b.vx / mag) * b.speed;
               b.vy = (b.vy / mag) * b.speed;
             } else {
-              // MISSED PADDLE -> INSTANT GOAL FOR P2!
               triggerScore('p2', b.x, p1Top);
             }
           }
 
-          // 2. P2 PADDLE HIT / GOAL CHECK (Top Paddle: Y = 52)
-          const p2Bottom = 40 + PH; // 52
+          // 2. P2 PADDLE HIT
+          const p2Bottom = 40 + PH; 
           if (b.vy < 0 && b.y - BR <= p2Bottom) {
-            // 15px Lag Compensation Buffer + Swept Vector Range for P2 over Network
-            const p2MinX = Math.min(st.p2.x, st.p2.lastX) - PW/2 - BR - 15;
-            const p2MaxX = Math.max(st.p2.x, st.p2.lastX) + PW/2 + BR + 15;
+            const p2MinX = st.p2.x - PW/2 - BR - 25;
+            const p2MaxX = st.p2.x + PW/2 + BR + 25;
             
             if (b.x >= p2MinX && b.x <= p2MaxX) {
-              // HIT! Bounce ball back down
               b.vy *= -1;
-              b.y = p2Bottom + BR; // 60
+              b.y = p2Bottom + BR;
               
               if (Math.abs(p2Vel) > 3) {
                 b.vx += (p2Vel * 0.15);
                 b.speed = Math.min(14, b.speed + 1.2);
                 b.isSmash = true;
-                playTone(800, 'square', 0.08);
-                st.shake = 4;
+                playTone(800, 'square', 0.08); st.shake = 4;
               } else {
                 b.speed = Math.min(12, b.speed + 0.3);
                 b.isSmash = false;
                 playTone(600, 'sine', 0.08);
               }
-              
               const mag = Math.sqrt(b.vx*b.vx + b.vy*b.vy) || 1;
               b.vx = (b.vx / mag) * b.speed;
               b.vy = (b.vy / mag) * b.speed;
             } else {
-              // MISSED PADDLE -> INSTANT GOAL FOR P1!
               triggerScore('p1', b.x, p2Bottom);
             }
           }
         }
 
-        // Guest Interpolation
+        // ---------------------------------------------------------
+        // GUEST LOCAL PREDICTION 
+        // ---------------------------------------------------------
         if (playerRole === 'p2' && st.status === 'PLAYING') {
           b.x += b.vx;
           b.y += b.vy;
-          if (b.x <= BR || b.x >= CW - BR) b.vx *= -1;
+          if (b.x <= BR || b.x >= CW - BR) {
+             b.vx *= -1;
+             b.x = b.x <= BR ? BR : CW - BR;
+          }
+
+          // Predict local bounce for Guest so the ball stops visibly tearing through their paddle
+          const p2Bottom = 40 + PH;
+          if (b.vy < 0 && b.y - BR <= p2Bottom) {
+             const p2MinX = st.p2.x - PW/2 - BR - 25;
+             const p2MaxX = st.p2.x + PW/2 + BR + 25;
+             if (b.x >= p2MinX && b.x <= p2MaxX) {
+                b.vy *= -1; b.y = p2Bottom + BR;
+                playTone(600, 'sine', 0.08);
+             }
+          }
+
+          const p1Top = CH - 40;
+          if (b.vy > 0 && b.y + BR >= p1Top) {
+             const p1MinX = st.p1.x - PW/2 - BR - 25;
+             const p1MaxX = st.p1.x + PW/2 + BR + 25;
+             if (b.x >= p1MinX && b.x <= p1MaxX) {
+                b.vy *= -1; b.y = p1Top - BR;
+             }
+          }
         }
 
         // Record Trail
@@ -374,12 +385,10 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         }
 
         // ---------------------------------------------------------
-        // RENDER (Android-Safe Canvas)
+        // RENDER 
         // ---------------------------------------------------------
         const mapX = (x: number) => playerRole === 'p2' ? CW - x : x;
         const mapY = (y: number) => playerRole === 'p2' ? CH - y : y;
-        
-        // Rectangles are drawn downwards. We must factor in PH (height) when flipping the Y-Axis!
         const mapPaddleY = (y: number) => playerRole === 'p2' ? CH - y - PH : y;
 
         ctx.save();
@@ -392,7 +401,6 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           if (st.shake < 0.5) st.shake = 0;
         }
 
-        // Midline
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
         ctx.lineWidth = 4;
         ctx.setLineDash([15, 15]);
@@ -403,12 +411,9 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         const rivalColor = '#ec4899'; 
         
         const drawPaddle = (x: number, y: number, color: string) => {
-          ctx.shadowColor = color;
-          ctx.shadowBlur = 10;
-          ctx.fillStyle = color;
+          ctx.shadowColor = color; ctx.shadowBlur = 10; ctx.fillStyle = color;
           ctx.fillRect(x - PW/2, y, PW, PH);
-          ctx.shadowBlur = 0;
-          ctx.fillStyle = '#ffffff';
+          ctx.shadowBlur = 0; ctx.fillStyle = '#ffffff';
           ctx.fillRect(x - PW/2 + 4, y + 2, PW - 8, PH - 4);
         };
 
@@ -420,44 +425,31 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
           drawPaddle(mapX(st.p1.x), mapPaddleY(CH - 40), rivalColor);
         }
 
-        // Trails
         st.trail.forEach((t) => {
           t.age -= 0.06;
           if (t.age > 0) {
             ctx.beginPath();
             ctx.arc(mapX(t.x), mapY(t.y), Math.max(0.1, BR * t.age), 0, Math.PI*2);
             ctx.fillStyle = b.isSmash 
-              ? `rgba(239, 68, 68, ${t.age})`
-              : `rgba(255, 255, 255, ${t.age * 0.4})`;
+              ? `rgba(239, 68, 68, ${t.age})` : `rgba(255, 255, 255, ${t.age * 0.4})`;
             ctx.fill();
           }
         });
         st.trail = st.trail.filter(t => t.age > 0);
 
-        // Ball
         if (st.status === 'PLAYING' || st.status === 'SCORE') {
           const ballColor = b.isSmash ? '#ef4444' : '#ffffff';
-          ctx.shadowColor = ballColor;
-          ctx.shadowBlur = b.isSmash ? 15 : 8;
+          ctx.shadowColor = ballColor; ctx.shadowBlur = b.isSmash ? 15 : 8;
           ctx.fillStyle = ballColor;
-          ctx.beginPath();
-          ctx.arc(mapX(b.x), mapY(b.y), BR, 0, Math.PI*2);
-          ctx.fill();
+          ctx.beginPath(); ctx.arc(mapX(b.x), mapY(b.y), BR, 0, Math.PI*2); ctx.fill();
           ctx.shadowBlur = 0;
         }
 
-        // Particles
         st.particles.forEach(p => {
-          p.x += p.vx; 
-          p.y += p.vy; 
-          p.life -= 0.03;
-          
+          p.x += p.vx; p.y += p.vy; p.life -= 0.03;
           if (p.life > 0) {
-            ctx.fillStyle = p.color;
-            ctx.globalAlpha = Math.max(0, p.life);
-            ctx.beginPath(); 
-            ctx.arc(mapX(p.x), mapY(p.y), Math.max(0.1, 3 * p.life), 0, Math.PI*2); 
-            ctx.fill();
+            ctx.fillStyle = p.color; ctx.globalAlpha = Math.max(0, p.life);
+            ctx.beginPath(); ctx.arc(mapX(p.x), mapY(p.y), Math.max(0.1, 3 * p.life), 0, Math.PI*2); ctx.fill();
           }
         });
         ctx.globalAlpha = 1.0;
@@ -492,12 +484,9 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
       {/* Main Gameplay Canvas */}
       <canvas 
         ref={canvasRef} 
-        width={CW} 
-        height={CH} 
-        onPointerDown={handlePointer}
-        onPointerMove={handlePointer}
-        onPointerUp={handlePointer}
-        onPointerCancel={handlePointer}
+        width={CW} height={CH} 
+        onPointerDown={handlePointer} onPointerMove={handlePointer}
+        onPointerUp={handlePointer} onPointerCancel={handlePointer}
         className="w-full max-w-[400px] aspect-[2/3] object-cover bg-slate-950 border-x-2 border-slate-800 shadow-2xl cursor-crosshair touch-none" 
       />
 
@@ -506,13 +495,11 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center p-6 z-20 transition-opacity duration-300 pointer-events-none">
           
           {gameState === 'WAITING' && (
-            <div className="text-cyan-400 font-black text-2xl animate-pulse tracking-widest">SYNCING ARENA...</div>
+             <div className="text-cyan-400 font-black text-2xl animate-pulse tracking-widest">SYNCING ARENA...</div>
           )}
-
           {gameState === 'SCORE' && (
-            <div className="text-yellow-400 font-black text-5xl italic tracking-widest">GOAL!</div>
+             <div className="text-yellow-400 font-black text-5xl italic tracking-widest">GOAL!</div>
           )}
-
           {gameState === 'GAMEOVER' && (
             <div className="bg-slate-900 border-2 border-slate-700 p-8 rounded-3xl w-full max-w-[340px] text-center shadow-2xl animate-in zoom-in-95 pointer-events-auto">
               <h2 className={`text-5xl font-black mb-8 uppercase tracking-widest ${resultMsg === 'YOU WIN!' ? 'text-cyan-400' : 'text-rose-500'}`}>
