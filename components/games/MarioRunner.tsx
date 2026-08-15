@@ -171,7 +171,7 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
 
     const unsubGuestSync = subscribePayload('GUEST_SYNC', (data) => {
       if (playerRole === 'p1' && !isNaN(data.p2x)) {
-        stateRef.current.p2.lastX = stateRef.current.p2.x;
+        stateRef.current.p2.lastX = stateRef.current.p2.x; // Track previous position for lag comp
         stateRef.current.p2.x = data.p2x;
       }
     });
@@ -280,10 +280,9 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         const p2Vel = st.p2.x - st.p2.lastX;
 
         // ---------------------------------------------------------
-        // UNIFIED PADDLE COLLISIONS (CLIENT-SIDE PREDICTION)
-        // Both Host and Guest predict paddle collisions locally at 60 FPS
+        // PHYSICS (Host Only)
         // ---------------------------------------------------------
-        if (st.status === 'PLAYING') {
+        if (playerRole === 'p1' && st.status === 'PLAYING') {
           b.x += b.vx;
           b.y += b.vy;
 
@@ -294,16 +293,18 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
             playTone(400, 'sine', 0.05);
           }
 
-          // 1. P1 Paddle Hit / Goal Check (Bottom Paddle: Y = 560)
+          // 1. P1 PADDLE HIT / GOAL CHECK (Bottom Paddle: Y = 560)
           const p1Top = CH - 40; // 560
-          if (b.vy > 0 && b.y + BR >= p1Top && b.y - BR <= p1Top + PH) {
-            const p1MinX = Math.min(st.p1.x, st.p1.lastX) - PW/2 - BR - 10;
-            const p1MaxX = Math.max(st.p1.x, st.p1.lastX) + PW/2 + BR + 10;
-
+          if (b.vy > 0 && b.y + BR >= p1Top) {
+            // Local P1 Lag Buffer (+5px)
+            const p1MinX = Math.min(st.p1.x, st.p1.lastX) - PW/2 - BR - 5;
+            const p1MaxX = Math.max(st.p1.x, st.p1.lastX) + PW/2 + BR + 5;
+            
             if (b.x >= p1MinX && b.x <= p1MaxX) {
-              b.vy = -Math.abs(b.vy); // Ensure moving UP
-              b.y = p1Top - BR;       // 552
-
+              // HIT! Bounce ball back up
+              b.vy *= -1;
+              b.y = p1Top - BR; // 552
+              
               if (Math.abs(p1Vel) > 3) {
                 b.vx += (p1Vel * 0.15);
                 b.speed = Math.min(14, b.speed + 1.2);
@@ -315,26 +316,28 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
                 b.isSmash = false;
                 playTone(600, 'sine', 0.08);
               }
-
+              
               const mag = Math.sqrt(b.vx*b.vx + b.vy*b.vy) || 1;
               b.vx = (b.vx / mag) * b.speed;
               b.vy = (b.vy / mag) * b.speed;
-            } else if (playerRole === 'p1' && b.y + BR >= CH - 5) {
-              // Goal for P2 only triggered by Host
-              triggerScore('p2', b.x, CH - 10);
+            } else {
+              // MISSED PADDLE -> INSTANT GOAL FOR P2!
+              triggerScore('p2', b.x, p1Top);
             }
           }
 
-          // 2. P2 Paddle Hit / Goal Check (Top Paddle: Y = 52)
+          // 2. P2 PADDLE HIT / GOAL CHECK (Top Paddle: Y = 52)
           const p2Bottom = 40 + PH; // 52
-          if (b.vy < 0 && b.y - BR <= p2Bottom && b.y + BR >= 40) {
+          if (b.vy < 0 && b.y - BR <= p2Bottom) {
+            // 15px Lag Compensation Buffer + Swept Vector Range for P2 over Network
             const p2MinX = Math.min(st.p2.x, st.p2.lastX) - PW/2 - BR - 15;
             const p2MaxX = Math.max(st.p2.x, st.p2.lastX) + PW/2 + BR + 15;
-
+            
             if (b.x >= p2MinX && b.x <= p2MaxX) {
-              b.vy = Math.abs(b.vy); // Ensure moving DOWN
-              b.y = p2Bottom + BR;   // 60
-
+              // HIT! Bounce ball back down
+              b.vy *= -1;
+              b.y = p2Bottom + BR; // 60
+              
               if (Math.abs(p2Vel) > 3) {
                 b.vx += (p2Vel * 0.15);
                 b.speed = Math.min(14, b.speed + 1.2);
@@ -346,17 +349,26 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
                 b.isSmash = false;
                 playTone(600, 'sine', 0.08);
               }
-
+              
               const mag = Math.sqrt(b.vx*b.vx + b.vy*b.vy) || 1;
               b.vx = (b.vx / mag) * b.speed;
               b.vy = (b.vy / mag) * b.speed;
-            } else if (playerRole === 'p1' && b.y - BR <= 5) {
-              // Goal for P1 only triggered by Host
-              triggerScore('p1', b.x, 10);
+            } else {
+              // MISSED PADDLE -> INSTANT GOAL FOR P1!
+              triggerScore('p1', b.x, p2Bottom);
             }
           }
+        }
 
-          // Record Trail
+        // Guest Interpolation
+        if (playerRole === 'p2' && st.status === 'PLAYING') {
+          b.x += b.vx;
+          b.y += b.vy;
+          if (b.x <= BR || b.x >= CW - BR) b.vx *= -1;
+        }
+
+        // Record Trail
+        if (st.status === 'PLAYING') {
           st.trail.unshift({ x: b.x, y: b.y, age: 1.0 });
           if (st.trail.length > 15) st.trail.pop();
         }
@@ -366,6 +378,9 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         // ---------------------------------------------------------
         const mapX = (x: number) => playerRole === 'p2' ? CW - x : x;
         const mapY = (y: number) => playerRole === 'p2' ? CH - y : y;
+        
+        // Rectangles are drawn downwards. We must factor in PH (height) when flipping the Y-Axis!
+        const mapPaddleY = (y: number) => playerRole === 'p2' ? CH - y - PH : y;
 
         ctx.save();
         ctx.fillStyle = '#020617'; 
@@ -398,11 +413,11 @@ export default function MarioRunner({ playerRole, p1Name, p2Name, broadcastPaylo
         };
 
         if (playerRole === 'p1') {
-          drawPaddle(mapX(st.p1.x), mapY(CH - 40), localColor);
-          drawPaddle(mapX(st.p2.x), mapY(40), rivalColor);
+          drawPaddle(mapX(st.p1.x), mapPaddleY(CH - 40), localColor);
+          drawPaddle(mapX(st.p2.x), mapPaddleY(40), rivalColor);
         } else {
-          drawPaddle(mapX(st.p2.x), mapY(40), localColor);
-          drawPaddle(mapX(st.p1.x), mapY(CH - 40), rivalColor);
+          drawPaddle(mapX(st.p2.x), mapPaddleY(40), localColor);
+          drawPaddle(mapX(st.p1.x), mapPaddleY(CH - 40), rivalColor);
         }
 
         // Trails
